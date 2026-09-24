@@ -1,0 +1,65 @@
+# Status-flag helpers. AC0_COPY and V_COPY are separate ASTAT bits that every
+# arithmetic update of AC0 and V writes as well.
+
+macro setnz(r) {
+  AZ = r == 0;
+  AN = r s< 0;
+}
+
+macro setv(o) {
+  V = o;
+  V_COPY = o;
+  VS = VS | o;
+}
+
+macro setac0(c) {
+  AC0 = c;
+  AC0_COPY = c;
+}
+
+# Logical results: AZ/AN from the value, AC0 and V cleared.
+macro setlogical(r) {
+  AZ = r == 0;
+  AN = r s< 0;
+  AC0 = 0;
+  AC0_COPY = 0;
+  V = 0;
+  V_COPY = 0;
+}
+
+macro packastat(t) {
+  t = ASTAT_RSV & 0xfcf0ce90;
+  t = t | zext(AZ) | (zext(AN) << 1) | (zext(AC0_COPY) << 2) | (zext(V_COPY) << 3);
+  t = t | (zext(CC) << 5) | (zext(AQ) << 6) | (zext(RND_MOD) << 8);
+  t = t | (zext(AC0) << 12) | (zext(AC1) << 13);
+  t = t | (zext(AV0) << 16) | (zext(AV0S) << 17) | (zext(AV1) << 18) | (zext(AV1S) << 19);
+  t = t | (zext(V) << 24) | (zext(VS) << 25);
+}
+
+macro unpackastat(t) {
+  AZ = (t & 0x1) != 0;
+  AN = (t & 0x2) != 0;
+  AC0_COPY = (t & 0x4) != 0;
+  V_COPY = (t & 0x8) != 0;
+  CC = (t & 0x20) != 0;
+  AQ = (t & 0x40) != 0;
+  RND_MOD = (t & 0x100) != 0;
+  AC0 = (t & 0x1000) != 0;
+  AC1 = (t & 0x2000) != 0;
+  AV0 = (t & 0x10000) != 0;
+  AV0S = (t & 0x20000) != 0;
+  AV1 = (t & 0x40000) != 0;
+  AV1S = (t & 0x80000) != 0;
+  V = (t & 0x1000000) != 0;
+  VS = (t & 0x2000000) != 0;
+  ASTAT_RSV = t & 0xfcf0ce90;
+}
+
+# Bit reverse of a 32-bit value, for the (BREV) bit-reversed address adds.
+macro brev32(x) {
+  x = ((x >> 1) & 0x55555555) | ((x & 0x55555555) << 1);
+  x = ((x >> 2) & 0x33333333) | ((x & 0x33333333) << 2);
+  x = ((x >> 4) & 0x0f0f0f0f) | ((x & 0x0f0f0f0f) << 4);
+  x = ((x >> 8) & 0x00ff00ff) | ((x & 0x00ff00ff) << 8);
+  x = (x >> 16) | (x << 16);
+}

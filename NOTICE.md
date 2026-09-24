@@ -1,29 +1,22 @@
 # Source provenance and licensing
 
-This is an independent Ghidra SLEIGH port informed by the instruction masks,
-field layouts, and register maps in `0bs3n/arch-blackfin`, commit
-`5cd19a58b7790ab18dc5100ef8033254945329af` (2022-05-27):
+This is an independent Ghidra SLEIGH implementation of the classic Blackfin
+ISA. No third-party source is vendored; the references below were read to get
+encodings, syntax and behaviour right.
 
-<https://github.com/0bs3n/arch-blackfin>
+- **GNU binutils 2.44, `opcodes/bfin-dis.c`** (GPL-3.0-or-later): instruction
+  classes, field layouts, the decode conditions of every class and the
+  assembly syntax. GNU objdump built from it is the decoding oracle.
+- **GNU gdb/sim 17.2, `sim/bfin/bfin-sim.c`** (GPL-3.0-or-later): execution
+  semantics, including ASTAT flag updates, saturation and rounding. The
+  simulator is the semantic oracle.
+- **`0bs3n/arch-blackfin`**, commit `5cd19a58b7790ab18dc5100ef8033254945329af`,
+  `disassembler/include/bfin.h` (GPL-2.0-or-later): field masks consulted by
+  the first version of this module.
 
-The upstream repository's top-level `LICENSE` is MIT and attributes copyright
-to 0bs3n (2022). Its `disassembler/include/bfin.h`, however, carries an
-explicit GPLv2-or-later notice and says it is based partly on GNU libopcodes.
-Because the encoding tables in this port were checked against that file, this
-module is conservatively distributed as GPL-2.0-or-later. Do not describe the
-upstream disassembler, taken as a whole, as unambiguously MIT-only.
-
-The instruction syntax and execution behavior were also checked against the
-GNU binutils Blackfin disassembler shipped by Homebrew. GNU binutils is GPLv3+
-and is used only as an external reference implementation/test oracle; no
-binutils source is vendored here.
-
-The current SLEIGH implementation specifically consulted upstream field maps
-and behavior for program control, register moves, immediate-half loads,
-hardware-loop setup, DAG and pointer load/store classes, push/pop classes,
-condition-code moves, logic/bit operations, and DSP32 multi-issue packet
-framing. The implementation is independently expressed in SLEIGH; the pinned
-commit above remains the provenance point for those encodings.
+The decoder and semantics follow those GPL-3.0-or-later references closely, so
+the module is distributed under **GPL-3.0-or-later** (the earlier
+GPL-2.0-or-later terms allow this). See [LICENSE.txt](LICENSE.txt).
 
 Ghidra is an Apache-2.0 project. This directory is a separately distributed
 processor extension and is not part of Ghidra itself.

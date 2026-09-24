@@ -1,5 +1,11 @@
-# Experimental classic Blackfin SLEIGH language.
-# SPDX-License-Identifier: GPL-2.0-or-later
+# Classic Blackfin (ADSP-BF53x) SLEIGH language.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Encodings and assembly syntax follow the GNU binutils Blackfin disassembler
+# (the decoding oracle); execution semantics follow the GNU simulator (the
+# semantic oracle). Circular DAG addressing (L0-L3 != 0) is not modelled: the
+# I registers are plain pointers, as the GCC ABI requires. The byte-video
+# operations (BYTEOP*, SAA) are opaque user operations.
 
 define endian=little;
 define alignment=2;
@@ -8,436 +14,140 @@ define space ram type=ram_space size=4 default;
 define space register type=register_space size=4;
 
 define register offset=0x000 size=4 [ R0 R1 R2 R3 R4 R5 R6 R7 ];
-define register offset=0x000 size=2 [ R0L R0H R1L R1H R2L R2H R3L R3H R4L R4H R5L R5H R6L R6H R7L R7H ];
-define register offset=0x100 size=4 [ P0 P1 P2 P3 P4 P5 SP FP ];
-define register offset=0x200 size=4 [ I0 I1 I2 I3 M0 M1 M2 M3 B0 B1 B2 B3 L0 L1 L2 L3 ];
-define register offset=0x300 size=4 [ A0X A0W A1X A1W ASTAT RETS ];
-define register offset=0x340 size=4 [ LC0 LT0 LB0 LC1 LT1 LB1 CYCLES CYCLES2 ];
-define register offset=0x380 size=4 [ USP SEQSTAT SYSCFG RETI RETX RETN RETE EMUDAT ];
-define register offset=0x3c0 size=4 [ PC ];
-define register offset=0x3d0 size=1 [ CC ];
+define register offset=0x000 size=2 [ R0.L R0.H R1.L R1.H R2.L R2.H R3.L R3.H R4.L R4.H R5.L R5.H R6.L R6.H R7.L R7.H ];
+define register offset=0x000 size=1 [ R0.B _ _ _ R1.B _ _ _ R2.B _ _ _ R3.B _ _ _ R4.B _ _ _ R5.B _ _ _ R6.B _ _ _ R7.B _ _ _ ];
+define register offset=0x020 size=4 [ P0 P1 P2 P3 P4 P5 SP FP ];
+define register offset=0x020 size=2 [ P0.L P0.H P1.L P1.H P2.L P2.H P3.L P3.H P4.L P4.H P5.L P5.H SP.L SP.H FP.L FP.H ];
+define register offset=0x040 size=4 [ I0 I1 I2 I3 M0 M1 M2 M3 B0 B1 B2 B3 L0 L1 L2 L3 ];
+define register offset=0x040 size=2 [ I0.L I0.H I1.L I1.H I2.L I2.H I3.L I3.H M0.L M0.H M1.L M1.H M2.L M2.H M3.L M3.H
+                                      B0.L B0.H B1.L B1.H B2.L B2.H B3.L B3.H L0.L L0.H L1.L L1.H L2.L L2.H L3.L L3.H ];
+# 40-bit accumulators: A0 holds the value in its low five bytes (A0.X is byte 4).
+define register offset=0x080 size=8 [ A0 A1 ];
+define register offset=0x080 size=4 [ A0.W _ A1.W _ ];
+define register offset=0x080 size=2 [ A0.L A0.H _ _ A1.L A1.H _ _ ];
+define register offset=0x084 size=1 [ A0.X ];
+define register offset=0x08c size=1 [ A1.X ];
+define register offset=0x100 size=4 [ RETS LC0 LT0 LB0 LC1 LT1 LB1 CYCLES CYCLES2 USP SEQSTAT SYSCFG RETI RETX RETN RETE EMUDAT IMASK PC ];
+# ASTAT is kept as individual status bits; ASTAT_RSV holds its undefined bits.
+define register offset=0x180 size=1 [ AZ AN AC0_COPY V_COPY CC AQ RND_MOD AC0 AC1 AV0 AV0S AV1 AV1S V VS ];
+define register offset=0x190 size=4 [ ASTAT_RSV MV ];
+# Snapshot of R0-R7, P0-P5, SP, FP, I0-I3 and M0-M3 taken before a multi-issue
+# packet: its two slots read these, so each slot sees pre-packet values.
+define register offset=0x1a0 size=4 [ R0_P R1_P R2_P R3_P R4_P R5_P R6_P R7_P ];
+define register offset=0x1a0 size=2 [ R0_P.L R0_P.H R1_P.L R1_P.H R2_P.L R2_P.H R3_P.L R3_P.H R4_P.L R4_P.H R5_P.L R5_P.H R6_P.L R6_P.H R7_P.L R7_P.H ];
+define register offset=0x2a0 size=4 [ P0_P P1_P P2_P P3_P P4_P P5_P SP_P FP_P I0_P I1_P I2_P I3_P M0_P M1_P M2_P M3_P ];
+# DSP32 scratch: multiplier inputs, products, accumulator working values and
+# per-MAC results, written and consumed within one instruction.
+define register offset=0x200 size=8 [ PR1 PR0 ACC1 ACC0 ACN1 ACN0 ];
+define register offset=0x240 size=4 [ RES1 RES0 ];
+define register offset=0x250 size=2 [ MA1 MB1 MA0 MB0 ];
+define register offset=0x260 size=1 [ PSAT1 PSAT0 ASAT1 ASAT0 OVF1 OVF0 SGN1 SGN0 VV1 VV0 ZZ1 ZZ0 NN1 NN0 ];
+define register offset=0x1e0 size=12 contextreg;
+# par: decoding a multi-issue slot. lbot0/lbot1: this instruction ends the LC0/LC1
+# hardware loop whose top is ltop0/ltop1 (set by LSETUP through globalset).
+define context contextreg
+  par=(0,0) noflow
+  lbot0=(1,1) noflow
+  lbot1=(2,2) noflow
+  ltop0=(32,63) noflow
+  ltop1=(64,95) noflow
+;
 
-define token op16(16)
+define pcodeop idle;
+define pcodeop emuexcpt;
+define pcodeop raise;
+define pcodeop excpt;
+define pcodeop prefetch;
+define pcodeop flushinv;
+define pcodeop flush;
+define pcodeop iflush;
+define pcodeop dbg;
+define pcodeop outc;
+define pcodeop dbg_assert;
+define pcodeop abort;
+define pcodeop halt;
+define pcodeop saa;
+define pcodeop byteop1p;
+define pcodeop byteop16p;
+define pcodeop byteop16m;
+define pcodeop byteop2p;
+define pcodeop byteop3p;
+define pcodeop disalgnexcpt;
+
+# Instruction word (16-bit instructions, the first word of 32-bit ones and the
+# two parallel slots of a multi-issue packet).
+define token instr(16)
   op=(0,15)
-  b0_2=(0,2) b3_5=(3,5) b3_5s=(3,5) signed b6_8=(6,8) b7_9=(7,9) b9_11=(9,11)
-  rd0=(0,2) rp0=(0,2) ri0=(0,2) rb0=(0,2) ra0=(0,2) rl0=(0,2) rs0=(0,2)
-  rd3=(3,5) rp3=(3,5) ri3=(3,5) rb3=(3,5) ra3=(3,5) rl3=(3,5) rs3=(3,5)
-  rd6=(6,8) rp6=(6,8) rlo6=(6,8) rhi6=(6,8)
-  ireg3=(3,4) mreg5=(5,6)
-  b3_4=(3,4)
-  b3_9=(3,9) signed
-  b0_3=(0,3) b0_3s=(0,3) signed b4_7=(4,7)
-  b0_4=(0,4) b4_8=(4,8)
-  b0_5=(0,5) b6_9=(6,9)
-  b0_6=(0,6) signed
-  b0_7=(0,7) b0_7s=(0,7) signed b8_10=(8,10)
-  b0_9=(0,9) signed
-  b0_11=(0,11) signed
-  bit3=(3,3) bit4=(4,4) bit5=(5,5) bit6=(6,6) bit7=(7,7) bit8=(8,8) bit9=(9,9) bit10=(10,10) bit11=(11,11) bit12=(12,12)
-  logsrc=(3,7)
-  b5_6=(5,6) b6_7=(6,7) b7_8=(7,8) b9_10=(9,10) b10_11=(10,11)
-  b4_15=(4,15) b7_15=(7,15) b8_15=(8,15) b9_15=(9,15) b10_15=(10,15) b11_15=(11,15) b12_15=(12,15) b13_15=(13,15) b14_15=(14,15)
+  w0_1=(0,1) w0_2=(0,2) w0_3=(0,3) w0_4=(0,4) w0_5=(0,5) w0_7=(0,7) w0_7s=(0,7) signed
+  w0_9s=(0,9) signed w0_10=(0,10) w0_11s=(0,11) signed w0_2d=(0,2) dec
+  w2_3=(2,3) w3_4=(3,4) w3_5=(3,5) w3_5s=(3,5) signed w3_5d=(3,5) dec w3_7=(3,7) w3_9s=(3,9) signed
+  w2=(2,2) w3=(3,3) w4=(4,4) w4_7=(4,7) w4_8=(4,8) w4_15=(4,15) w5=(5,5) w5_6=(5,6) w5_8=(5,8) w5_15=(5,15)
+  w6=(6,6) w6_7=(6,7) w6_8=(6,8) w6_9=(6,9) w6_15=(6,15) w7=(7,7) w7_8=(7,8) w7_9=(7,9) w7_15=(7,15)
+  w8=(8,8) w8_10=(8,10) w8_15=(8,15) w9=(9,9) w9_10=(9,10) w9_11=(9,11) w9_15=(9,15)
+  w10=(10,10) w10_11=(10,11) w10_15=(10,15) w11=(11,11) w11_15=(11,15) w12=(12,12) w12_15=(12,15) w13_15=(13,15)
+  w14_15=(14,15)
+  dr0=(0,2) dr0b=(0,2) dr3=(3,5) dr6=(6,8)
+  dl0=(0,2) dl3=(3,5) dl6=(6,8) dh0=(0,2) dh3=(3,5) dh6=(6,8) db3=(3,5)
+  pr0=(0,2) pr0b=(0,2) pr3=(3,5) pr6=(6,8)
+  sd0=(0,2) sd6=(6,8) sdl0=(0,2) sdh0=(0,2) sdl6=(6,8) sdh6=(6,8)
+  sp0=(0,2) sp3=(3,5) si0=(0,1) si3=(3,4) sm2=(2,3) sm5=(5,6) sdp0=(0,3)
+  im0=(0,2) im3=(3,5) bl0=(0,2) bl3=(3,5) lc0=(0,2) lc3=(3,5) sy0=(0,2) sy3=(3,5)
+  ir0=(0,1) ir3=(3,4) mr2=(2,3) mr5=(5,6)
+  dp0=(0,3)
+  rg0=(0,4) rgl0=(0,4) rgh0=(0,4)
+  psr=(0,5) ppr=(0,5)
+  cbit=(0,4) cbn=(0,4)
 ;
 
-define token ext16(16)
-  imm16=(0,15)
-  simm16=(0,15) signed
-  ext_b0_2=(0,2) ext_b3_5=(3,5) ext_b6_7=(6,7) ext_b8=(8,8)
-  ext_b0_9=(0,9) ext_p12=(12,14) ext_bit15=(15,15)
-  ext_b10_11=(10,11) ext_b12_15=(12,15)
+# Second word of a 32-bit instruction.
+define token ext(16)
+  x0_15=(0,15) x0_15s=(0,15) signed x0_7=(0,7)
+  x0_2=(0,2) x0_9=(0,9) x3_5=(3,5) x3_8=(3,8) x3_8s=(3,8) signed x6_8=(6,8) x8=(8,8) x9=(9,9) x9_11=(9,11) x10=(10,10)
+  x10_11=(10,11) x11_12=(11,12) x12=(12,12) x12_13=(12,13) x12_15=(12,15) x13=(13,13) x14=(14,14) x14_15=(14,15) x15=(15,15)
+  xdr0=(0,2) xdr3=(3,5) xdr6=(6,8) xdr9=(9,11) xdl0=(0,2) xdl3=(3,5) xdl6=(6,8) xdl9=(9,11) xdh0=(0,2) xdh3=(3,5) xdh6=(6,8) xdh9=(9,11)
+  xdr9b=(9,11) xdl9b=(9,11) xdr3b=(3,5) xdr0b=(0,2) x6_7=(6,7) x0_1=(0,1) x3_4=(3,4)
+  xpr12=(12,14)
 ;
 
-define token par_a(16)
-  pa_op=(0,15)
-  pa_r0=(0,2) pa_p0=(0,2) pa_dp0=(0,3) pa_p3=(3,5)
-  pa_b4_8=(4,8) pa_b6_9=(6,9) pa_b10_11=(10,11) pa_b10_15=(10,15) pa_b12_15=(12,15) pa_b13_15=(13,15)
-  pa_bit6=(6,6) pa_bit9=(9,9) pa_bit12=(12,12) pa_b7_8=(7,8)
-;
+attach variables [ dr0 dr0b dr3 dr6 xdr0 xdr3 xdr6 xdr9 xdr9b xdr3b xdr0b ] [ R0 R1 R2 R3 R4 R5 R6 R7 ];
+attach variables [ dl0 dl3 dl6 xdl0 xdl3 xdl6 xdl9 xdl9b ] [ R0.L R1.L R2.L R3.L R4.L R5.L R6.L R7.L ];
+attach variables [ dh0 dh3 dh6 xdh0 xdh3 xdh6 xdh9 ] [ R0.H R1.H R2.H R3.H R4.H R5.H R6.H R7.H ];
+attach variables [ db3 ] [ R0.B R1.B R2.B R3.B R4.B R5.B R6.B R7.B ];
+attach variables [ pr0 pr0b pr3 pr6 xpr12 ] [ P0 P1 P2 P3 P4 P5 SP FP ];
+attach variables [ sd0 sd6 ] [ R0_P R1_P R2_P R3_P R4_P R5_P R6_P R7_P ];
+attach variables [ sdl0 sdl6 ] [ R0_P.L R1_P.L R2_P.L R3_P.L R4_P.L R5_P.L R6_P.L R7_P.L ];
+attach variables [ sdh0 sdh6 ] [ R0_P.H R1_P.H R2_P.H R3_P.H R4_P.H R5_P.H R6_P.H R7_P.H ];
+attach variables [ sp0 sp3 ] [ P0_P P1_P P2_P P3_P P4_P P5_P SP_P FP_P ];
+attach variables [ si0 si3 ] [ I0_P I1_P I2_P I3_P ];
+attach variables [ sm2 sm5 ] [ M0_P M1_P M2_P M3_P ];
+attach variables [ sdp0 ] [ R0_P R1_P R2_P R3_P R4_P R5_P R6_P R7_P P0_P P1_P P2_P P3_P P4_P P5_P SP_P FP_P ];
+attach variables [ im0 im3 ] [ I0 I1 I2 I3 M0 M1 M2 M3 ];
+attach variables [ bl0 bl3 ] [ B0 B1 B2 B3 L0 L1 L2 L3 ];
+attach variables [ lc0 lc3 ] [ LC0 LT0 LB0 LC1 LT1 LB1 CYCLES CYCLES2 ];
+attach variables [ sy0 sy3 ] [ USP SEQSTAT SYSCFG RETI RETX RETN RETE EMUDAT ];
+attach variables [ ir0 ir3 ] [ I0 I1 I2 I3 ];
+attach variables [ mr2 mr5 ] [ M0 M1 M2 M3 ];
+attach variables [ dp0 ] [ R0 R1 R2 R3 R4 R5 R6 R7 P0 P1 P2 P3 P4 P5 SP FP ];
+attach variables [ rg0 ] [ R0 R1 R2 R3 R4 R5 R6 R7 P0 P1 P2 P3 P4 P5 SP FP I0 I1 I2 I3 M0 M1 M2 M3 B0 B1 B2 B3 L0 L1 L2 L3 ];
+attach variables [ rgl0 ] [ R0.L R1.L R2.L R3.L R4.L R5.L R6.L R7.L P0.L P1.L P2.L P3.L P4.L P5.L SP.L FP.L
+                            I0.L I1.L I2.L I3.L M0.L M1.L M2.L M3.L B0.L B1.L B2.L B3.L L0.L L1.L L2.L L3.L ];
+attach variables [ rgh0 ] [ R0.H R1.H R2.H R3.H R4.H R5.H R6.H R7.H P0.H P1.H P2.H P3.H P4.H P5.H SP.H FP.H
+                            I0.H I1.H I2.H I3.H M0.H M1.H M2.H M3.H B0.H B1.H B2.H B3.H L0.H L1.H L2.H L3.H ];
+# Register groups 0-7 x register 0-7 as one 6-bit field (push, pop, DBG). A0.X,
+# A1.X and ASTAT need special handling and are left out here.
+attach variables [ psr ] [ R0 R1 R2 R3 R4 R5 R6 R7 P0 P1 P2 P3 P4 P5 _ FP
+                           I0 I1 I2 I3 M0 M1 M2 M3 B0 B1 B2 B3 L0 L1 L2 L3
+                           _ A0.W _ A1.W _ _ _ RETS _ _ _ _ _ _ _ _
+                           LC0 LT0 LB0 LC1 LT1 LB1 CYCLES CYCLES2 USP SEQSTAT SYSCFG RETI RETX RETN RETE EMUDAT ];
+attach variables [ ppr ] [ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+                           I0 I1 I2 I3 M0 M1 M2 M3 B0 B1 B2 B3 L0 L1 L2 L3
+                           _ A0.W _ A1.W _ _ _ RETS _ _ _ _ _ _ _ _
+                           LC0 _ LB0 LC1 _ LB1 CYCLES CYCLES2 USP _ SYSCFG RETI RETX RETN RETE EMUDAT ];
+attach variables [ cbit ] [ AZ AN AC0_COPY V_COPY _ _ AQ _ RND_MOD _ _ _ AC0 AC1 _ _ AV0 AV0S AV1 AV1S _ _ _ _ V VS _ _ _ _ _ _ ];
 
-define token par_b(16)
-  pb_op=(0,15)
-  pb_r0=(0,2) pb_p0=(0,2) pb_dp0=(0,3) pb_p3=(3,5)
-  pb_b4_8=(4,8) pb_b6_9=(6,9) pb_b10_11=(10,11) pb_b10_15=(10,15) pb_b12_15=(12,15) pb_b13_15=(13,15)
-  pb_bit6=(6,6) pb_bit9=(9,9) pb_bit12=(12,12) pb_b7_8=(7,8)
-;
-
-attach variables [ rd0 ] [ R0 R1 R2 R3 R4 R5 R6 R7 ];
-attach variables [ rp0 ] [ P0 P1 P2 P3 P4 P5 SP FP ];
-attach variables [ ri0 ] [ I0 I1 I2 I3 M0 M1 M2 M3 ];
-attach variables [ rb0 ] [ B0 B1 B2 B3 L0 L1 L2 L3 ];
-attach variables [ ra0 ] [ A0X A0W A1X A1W _ _ ASTAT RETS ];
-attach variables [ rl0 ] [ LC0 LT0 LB0 LC1 LT1 LB1 CYCLES CYCLES2 ];
-attach variables [ rs0 ] [ USP SEQSTAT SYSCFG RETI RETX RETN RETE EMUDAT ];
-attach variables [ rd3 ] [ R0 R1 R2 R3 R4 R5 R6 R7 ];
-attach variables [ rp3 ] [ P0 P1 P2 P3 P4 P5 SP FP ];
-attach variables [ ri3 ] [ I0 I1 I2 I3 M0 M1 M2 M3 ];
-attach variables [ rb3 ] [ B0 B1 B2 B3 L0 L1 L2 L3 ];
-attach variables [ ra3 ] [ A0X A0W A1X A1W _ _ ASTAT RETS ];
-attach variables [ rl3 ] [ LC0 LT0 LB0 LC1 LT1 LB1 CYCLES CYCLES2 ];
-attach variables [ rs3 ] [ USP SEQSTAT SYSCFG RETI RETX RETN RETE EMUDAT ];
-attach variables [ rd6 ] [ R0 R1 R2 R3 R4 R5 R6 R7 ];
-attach variables [ rp6 ] [ P0 P1 P2 P3 P4 P5 SP FP ];
-attach variables [ rlo6 ] [ R0L R1L R2L R3L R4L R5L R6L R7L ];
-attach variables [ rhi6 ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
-attach variables [ ireg3 ] [ I0 I1 I2 I3 ];
-attach variables [ mreg5 ] [ M0 M1 M2 M3 ];
-attach variables [ ext_b0_2 ] [ R0 R1 R2 R3 R4 R5 R6 R7 ];
-attach variables [ ext_b3_5 ] [ P0 P1 P2 P3 P4 P5 SP FP ];
-attach variables [ ext_p12 ] [ P0 P1 P2 P3 P4 P5 SP FP ];
-attach variables [ pa_r0 ] [ R0 R1 R2 R3 R4 R5 R6 R7 ];
-attach variables [ pa_p0 ] [ P0 P1 P2 P3 P4 P5 SP FP ];
-attach variables [ pa_dp0 ] [ R0 R1 R2 R3 R4 R5 R6 R7 P0 P1 P2 P3 P4 P5 SP FP ];
-attach variables [ pa_p3 ] [ P0 P1 P2 P3 P4 P5 SP FP ];
-attach variables [ pb_r0 ] [ R0 R1 R2 R3 R4 R5 R6 R7 ];
-attach variables [ pb_p0 ] [ P0 P1 P2 P3 P4 P5 SP FP ];
-attach variables [ pb_dp0 ] [ R0 R1 R2 R3 R4 R5 R6 R7 P0 P1 P2 P3 P4 P5 SP FP ];
-attach variables [ pb_p3 ] [ P0 P1 P2 P3 P4 P5 SP FP ];
-
-DST_R: R0 is b0_2=0 & R0 { export R0; }
-DST_R: R1 is b0_2=1 & R1 { export R1; }
-DST_R: R2 is b0_2=2 & R2 { export R2; }
-DST_R: R3 is b0_2=3 & R3 { export R3; }
-DST_R: R4 is b0_2=4 & R4 { export R4; }
-DST_R: R5 is b0_2=5 & R5 { export R5; }
-DST_R: R6 is b0_2=6 & R6 { export R6; }
-DST_R: R7 is b0_2=7 & R7 { export R7; }
-
-SRC_R: R0 is b3_5=0 & R0 { export R0; }
-SRC_R: R1 is b3_5=1 & R1 { export R1; }
-SRC_R: R2 is b3_5=2 & R2 { export R2; }
-SRC_R: R3 is b3_5=3 & R3 { export R3; }
-SRC_R: R4 is b3_5=4 & R4 { export R4; }
-SRC_R: R5 is b3_5=5 & R5 { export R5; }
-SRC_R: R6 is b3_5=6 & R6 { export R6; }
-SRC_R: R7 is b3_5=7 & R7 { export R7; }
-
-PTR0: P0 is b0_2=0 & P0 { export P0; }
-PTR0: P1 is b0_2=1 & P1 { export P1; }
-PTR0: P2 is b0_2=2 & P2 { export P2; }
-PTR0: P3 is b0_2=3 & P3 { export P3; }
-PTR0: P4 is b0_2=4 & P4 { export P4; }
-PTR0: P5 is b0_2=5 & P5 { export P5; }
-PTR0: SP is b0_2=6 & SP { export SP; }
-PTR0: FP is b0_2=7 & FP { export FP; }
-
-PTR3: P0 is b3_5=0 & P0 { export P0; }
-PTR3: P1 is b3_5=1 & P1 { export P1; }
-PTR3: P2 is b3_5=2 & P2 { export P2; }
-PTR3: P3 is b3_5=3 & P3 { export P3; }
-PTR3: P4 is b3_5=4 & P4 { export P4; }
-PTR3: P5 is b3_5=5 & P5 { export P5; }
-PTR3: SP is b3_5=6 & SP { export SP; }
-PTR3: FP is b3_5=7 & FP { export FP; }
-
-DPREG: R0 is b0_3=0 & R0 { export R0; }
-DPREG: R1 is b0_3=1 & R1 { export R1; }
-DPREG: R2 is b0_3=2 & R2 { export R2; }
-DPREG: R3 is b0_3=3 & R3 { export R3; }
-DPREG: R4 is b0_3=4 & R4 { export R4; }
-DPREG: R5 is b0_3=5 & R5 { export R5; }
-DPREG: R6 is b0_3=6 & R6 { export R6; }
-DPREG: R7 is b0_3=7 & R7 { export R7; }
-DPREG: P0 is b0_3=8 & P0 { export P0; }
-DPREG: P1 is b0_3=9 & P1 { export P1; }
-DPREG: P2 is b0_3=10 & P2 { export P2; }
-DPREG: P3 is b0_3=11 & P3 { export P3; }
-DPREG: P4 is b0_3=12 & P4 { export P4; }
-DPREG: P5 is b0_3=13 & P5 { export P5; }
-DPREG: SP is b0_3=14 & SP { export SP; }
-DPREG: FP is b0_3=15 & FP { export FP; }
-
-# The architectural "allregs" map used by RegMv and PushPop. Reserved group
-# five and the two holes in group four intentionally have no constructor.
-ALLDST: rd3 is b9_11=0 & rd3 { export rd3; }
-ALLDST: rp3 is b9_11=1 & rp3 { export rp3; }
-ALLDST: ri3 is b9_11=2 & ri3 { export ri3; }
-ALLDST: rb3 is b9_11=3 & rb3 { export rb3; }
-ALLDST: ra3 is b9_11=4 & ra3 { export ra3; }
-ALLDST: rl3 is b9_11=6 & rl3 { export rl3; }
-ALLDST: rs3 is b9_11=7 & rs3 { export rs3; }
-
-ALLSRC: rd0 is b6_8=0 & rd0 { export rd0; }
-ALLSRC: rp0 is b6_8=1 & rp0 { export rp0; }
-ALLSRC: ri0 is b6_8=2 & ri0 { export ri0; }
-ALLSRC: rb0 is b6_8=3 & rb0 { export rb0; }
-ALLSRC: ra0 is b6_8=4 & ra0 { export ra0; }
-ALLSRC: rl0 is b6_8=6 & rl0 { export rl0; }
-ALLSRC: rs0 is b6_8=7 & rs0 { export rs0; }
-
-PUSHREG: rd0 is b3_5=0 & rd0 { export rd0; }
-PUSHREG: rp0 is b3_5=1 & rp0 { export rp0; }
-PUSHREG: ri0 is b3_5=2 & ri0 { export ri0; }
-PUSHREG: rb0 is b3_5=3 & rb0 { export rb0; }
-PUSHREG: ra0 is b3_5=4 & ra0 { export ra0; }
-PUSHREG: rl0 is b3_5=6 & rl0 { export rl0; }
-PUSHREG: rs0 is b3_5=7 & rs0 { export rs0; }
-
-IMMREG: rd0 is b3_4=0 & rd0 { export rd0; }
-IMMREG: rp0 is b3_4=1 & rp0 { export rp0; }
-IMMREG: ri0 is b3_4=2 & ri0 { export ri0; }
-IMMREG: rb0 is b3_4=3 & rb0 { export rb0; }
-
-CCSRC: rd0 is bit6=0 & rd0 { export rd0; }
-CCSRC: rp0 is bit6=1 & rp0 { export rp0; }
-CCDST: rd3 is bit7=0 & rd3 { export rd3; }
-CCDST: rp3 is bit7=1 & rp3 { export rp3; }
-
-REL10: target is b0_9 [ target = inst_start + (b0_9 << 1); ] { export *:4 target; }
-REL12: target is b0_11 [ target = inst_start + (b0_11 << 1); ] { export *:4 target; }
-REL24J: target is b9_15=0x71 & bit8=0 & b0_7s; imm16 [ target = inst_start + (((b0_7s << 16) | imm16) << 1); ] { export *:4 target; }
-REL24C: target is b9_15=0x71 & bit8=1 & b0_7s; imm16 [ target = inst_start + (((b0_7s << 16) | imm16) << 1); ] { export *:4 target; }
-LSTART: target is b0_3s [ target = inst_start + (b0_3s << 1); ] { export *:4 target; }
-LEND: target is ext_b0_9 [ target = inst_start + (ext_b0_9 << 1); ] { export *:4 target; }
-
-# Program control and direct control flow.
-:NOP is op=0x0000 { }
-:RTS is op=0x0010 { return [RETS]; }
-:RTI is op=0x0011 { return [RETI]; }
-:RTX is op=0x0012 { return [RETX]; }
-:RTN is op=0x0013 { return [RETN]; }
-:RTE is op=0x0014 { return [RETE]; }
-:IDLE is op=0x0020 { }
-:CSYNC is op=0x0022 { }
-:SSYNC is op=0x0023 { }
-:EMUEXCPT is op=0x0024 { }
-:CLI DST_R is b4_15=3 & bit3=0 & DST_R { DST_R = ASTAT; }
-:STI DST_R is b4_15=4 & bit3=0 & DST_R { ASTAT = DST_R; }
-:JUMP "(" PTR0 ")" is b4_15=5 & bit3=0 & PTR0 { goto [PTR0]; }
-:CALL "(" PTR0 ")" is b4_15=6 & bit3=0 & PTR0 { call [PTR0]; }
-:"CALL (PC +" PTR0 ")" is b4_15=7 & bit3=0 & PTR0 { local target:4 = inst_start + PTR0; call [target]; }
-:"JUMP (PC +" PTR0 ")" is b4_15=8 & bit3=0 & PTR0 { local target:4 = inst_start + PTR0; goto [target]; }
-:RAISE b0_3 is b4_15=0xa & b0_3 { }
-:EXCPT b0_3 is b4_15=0xb & b0_3 { }
-
-:"IF !CC JUMP" REL10 is b12_15=1 & bit11=0 & REL10 { if (CC == 0) goto REL10; }
-:"IF CC JUMP" REL10 is b12_15=1 & bit11=1 & REL10 { if (CC != 0) goto REL10; }
-:"JUMP.S" REL12 is b12_15=2 & REL12 { goto REL12; }
-:JUMP.L REL24J is REL24J { goto REL24J; }
-:CALL REL24C is REL24C { call REL24C; }
-
-:"IF CC" CCDST "=" CCSRC is b9_15=3 & bit8=1 & CCDST & CCSRC { if (CC == 0) goto <cc_done>; CCDST = CCSRC; <cc_done> }
-:"IF !CC" CCDST "=" CCSRC is b9_15=3 & bit8=0 & CCDST & CCSRC { if (CC != 0) goto <ncc_done>; CCDST = CCSRC; <ncc_done> }
-
-# Hardware-loop setup. Loop execution is represented through the architectural
-# LT/LB/LC registers; it is not modeled as an ordinary branch edge.
-:LSETUP "(" LSTART "," LEND ") LC0" is b7_15=0x1c1 & b5_6=0 & bit4=0 & LSTART; ext_bit15=0 & ext_b10_11=0 & LEND { }
-:LSETUP "(" LSTART "," LEND ") LC1" is b7_15=0x1c1 & b5_6=0 & bit4=1 & LSTART; ext_bit15=0 & ext_b10_11=0 & LEND { }
-:LSETUP "(" LSTART "," LEND ") LC0" is b7_15=0x1c1 & b5_6=2 & bit4=0 & LSTART; ext_bit15=0 & ext_b10_11=0 & LEND { }
-:LSETUP "(" LSTART "," LEND ") LC1" is b7_15=0x1c1 & b5_6=2 & bit4=1 & LSTART; ext_bit15=0 & ext_b10_11=0 & LEND { }
-:LSETUP "(" LSTART "," LEND ") LC0 =" ext_p12 is b7_15=0x1c1 & b5_6=1 & bit4=0 & LSTART; ext_bit15=0 & ext_b10_11=0 & LEND & ext_p12 { LC0 = ext_p12; }
-:LSETUP "(" LSTART "," LEND ") LC1 =" ext_p12 is b7_15=0x1c1 & b5_6=1 & bit4=1 & LSTART; ext_bit15=0 & ext_b10_11=0 & LEND & ext_p12 { LC1 = ext_p12; }
-:LSETUP "(" LSTART "," LEND ") LC0 =" ext_p12 ">> 1" is b7_15=0x1c1 & b5_6=3 & bit4=0 & LSTART; ext_bit15=0 & ext_b10_11=0 & LEND & ext_p12 { LC0 = ext_p12 >> 1; }
-:LSETUP "(" LSTART "," LEND ") LC1 =" ext_p12 ">> 1" is b7_15=0x1c1 & b5_6=3 & bit4=1 & LSTART; ext_bit15=0 & ext_b10_11=0 & LEND & ext_p12 { LC1 = ext_p12 >> 1; }
-
-# Linkage and 16-bit immediate loads.
-:LINK imm16 is op=0xe800; imm16 { SP = SP - 8; *:4 SP = RETS; *:4 (SP + 4) = FP; FP = SP; SP = SP - (imm16 << 2); }
-:UNLINK is op=0xe801; imm16=0 { SP = FP; RETS = *:4 SP; FP = *:4 (SP + 4); SP = SP + 8; }
-
-:^IMMREG^".L =" imm16 is b8_15=0xe1 & bit7=0 & bit6=0 & bit5=0 & IMMREG; imm16 { IMMREG = (IMMREG & 0xffff0000) | imm16; }
-:^IMMREG^".H =" imm16 is b8_15=0xe1 & bit7=0 & bit6=1 & bit5=0 & IMMREG; imm16 { IMMREG = (IMMREG & 0x0000ffff) | (imm16 << 16); }
-:^IMMREG "=" simm16 "(X)" is b8_15=0xe1 & bit7=0 & bit6=0 & bit5=1 & IMMREG; simm16 { local h:2 = simm16; IMMREG = sext(h); }
-:^IMMREG "=" imm16 "(Z)" is b8_15=0xe1 & bit7=1 & bit6=0 & bit5=0 & IMMREG; imm16 { local h:2 = imm16; IMMREG = zext(h); }
-
-# Register moves and common arithmetic.
-:^ALLDST "=" ALLSRC is b12_15=3 & ALLDST & ALLSRC { ALLDST = ALLSRC; }
-
-# Three-register computation class (COMP3op). Destination is bits 6..8;
-# bits 0..2 and 3..5 are the two independent sources.
-:^rd6 "=" rd0 "+" rd3 is b12_15=5 & b9_11=0 & rd6 & rd0 & rd3 { rd6 = rd0 + rd3; }
-:^rd6 "=" rd0 "-" rd3 is b12_15=5 & b9_11=1 & rd6 & rd0 & rd3 { rd6 = rd0 - rd3; }
-:^rd6 "=" rd0 "&" rd3 is b12_15=5 & b9_11=2 & rd6 & rd0 & rd3 { rd6 = rd0 & rd3; }
-:^rd6 "=" rd0 "|" rd3 is b12_15=5 & b9_11=3 & rd6 & rd0 & rd3 { rd6 = rd0 | rd3; }
-:^rd6 "=" rd0 "^" rd3 is b12_15=5 & b9_11=4 & rd6 & rd0 & rd3 { rd6 = rd0 ^ rd3; }
-:^rp6 "=" rp0 "+" rp3 is b12_15=5 & b9_11=5 & rp6 & rp0 & rp3 { rp6 = rp0 + rp3; }
-:^rp6 "=" rp0 "+ (" rp3 "<< 1)" is b12_15=5 & b9_11=6 & rp6 & rp0 & rp3 { rp6 = rp0 + (rp3 << 1); }
-:^rp6 "=" rp0 "+ (" rp3 "<< 2)" is b12_15=5 & b9_11=7 & rp6 & rp0 & rp3 { rp6 = rp0 + (rp3 << 2); }
-
-# Two-operand logic/bit class (LOGI2op), common in status polling and masks.
-:CC "= !BITTST (" rd0 "," logsrc ")" is b11_15=9 & b8_10=0 & rd0 & logsrc { CC = ((rd0 >> logsrc) & 1) == 0; }
-:CC "= BITTST (" rd0 "," logsrc ")" is b11_15=9 & b8_10=1 & rd0 & logsrc { CC = ((rd0 >> logsrc) & 1) != 0; }
-:BITSET "(" rd0 "," logsrc ")" is b11_15=9 & b8_10=2 & rd0 & logsrc { rd0 = rd0 | (1 << logsrc); }
-:BITTGL "(" rd0 "," logsrc ")" is b11_15=9 & b8_10=3 & rd0 & logsrc { rd0 = rd0 ^ (1 << logsrc); }
-:BITCLR "(" rd0 "," logsrc ")" is b11_15=9 & b8_10=4 & rd0 & logsrc { rd0 = rd0 & ~(1 << logsrc); }
-:^rd0 ">>s=" logsrc is b11_15=9 & b8_10=5 & rd0 & logsrc { rd0 = rd0 s>> logsrc; }
-:^rd0 ">>=" logsrc is b11_15=9 & b8_10=6 & rd0 & logsrc { rd0 = rd0 >> logsrc; }
-:^rd0 "<<=" logsrc is b11_15=9 & b8_10=7 & rd0 & logsrc { rd0 = rd0 << logsrc; }
-
-# High-value unary/extension ALU2op cases. Dynamic-shift and divide primitive
-# variants remain under BFIN16 until their signed-count behavior is modeled.
-:^rd0 "= -" SRC_R is b10_15=0x10 & b6_9=14 & rd0 & SRC_R { rd0 = -SRC_R; }
-:^rd0 "= ~" SRC_R is b10_15=0x10 & b6_9=15 & rd0 & SRC_R { rd0 = ~SRC_R; }
-:^rd0 "= sign16(" SRC_R ")" is b10_15=0x10 & b6_9=10 & rd0 & SRC_R { local h:2 = SRC_R:2; rd0 = sext(h); }
-:^rd0 "= zero16(" SRC_R ")" is b10_15=0x10 & b6_9=11 & rd0 & SRC_R { local h:2 = SRC_R:2; rd0 = zext(h); }
-:^rd0 "= sign8(" SRC_R ")" is b10_15=0x10 & b6_9=12 & rd0 & SRC_R { local b:1 = SRC_R:1; rd0 = sext(b); }
-:^rd0 "= zero8(" SRC_R ")" is b10_15=0x10 & b6_9=13 & rd0 & SRC_R { local b:1 = SRC_R:1; rd0 = zext(b); }
-
-# Compact signed immediate load/add. Common in compiler output.
-:^DST_R "=" b3_9 "(X)" is b11_15=0xc & bit10=0 & DST_R & b3_9 { DST_R = b3_9; }
-:^DST_R "+=" b3_9 is b11_15=0xc & bit10=1 & DST_R & b3_9 { DST_R = DST_R + b3_9; }
-:^PTR0 "=" b3_9 "(X)" is b11_15=0xd & bit10=0 & PTR0 & b3_9 { PTR0 = b3_9; }
-:^PTR0 "+=" b3_9 is b11_15=0xd & bit10=1 & PTR0 & b3_9 { PTR0 = PTR0 + b3_9; }
-
-# Single-register stack pushes and full-width post-modify loads/stores.
-:"[--SP] =" PUSHREG is b7_15=2 & bit6=1 & PUSHREG { SP = SP - 4; *:4 SP = PUSHREG; }
-:^PUSHREG "= [SP++]" is b7_15=2 & bit6=0 & PUSHREG { PUSHREG = *:4 SP; SP = SP + 4; }
-
-# Register-range stack operations. The individual stores/loads are not yet
-# expanded, but the exact stack delta is represented for frame recovery.
-# Expand the R7:4/P5:3 ABI save set used by the waveform renderer so emulator
-# state is preserved across its leaf wrapper.
-:"[--SP] = (R7:4, P5:3)" is op=0x05e3 {
-  SP = SP - 28;
-  *:4 SP = P3; *:4 (SP + 4) = P4; *:4 (SP + 8) = P5;
-  *:4 (SP + 12) = R4; *:4 (SP + 16) = R5; *:4 (SP + 20) = R6; *:4 (SP + 24) = R7;
-}
-:"(R7:4, P5:3) = [SP++]" is op=0x05a3 {
-  P3 = *:4 SP; P4 = *:4 (SP + 4); P5 = *:4 (SP + 8);
-  R4 = *:4 (SP + 12); R5 = *:4 (SP + 16); R6 = *:4 (SP + 20); R7 = *:4 (SP + 24);
-  SP = SP + 28;
-}
-:"[--SP] = (R7:" b3_5 ")" is b9_15=2 & bit8=1 & bit7=0 & bit6=1 & b3_5 & b0_2=0 { SP = SP - ((8 - b3_5) << 2); }
-:"(R7:" b3_5 ") = [SP++]" is b9_15=2 & bit8=1 & bit7=0 & bit6=0 & b3_5 & b0_2=0 { SP = SP + ((8 - b3_5) << 2); }
-:"[--SP] = (P5:" b0_2 ")" is b9_15=2 & bit8=0 & bit7=1 & bit6=1 & b3_5=0 & b0_2 { SP = SP - ((6 - b0_2) << 2); }
-:"(P5:" b0_2 ") = [SP++]" is b9_15=2 & bit8=0 & bit7=1 & bit6=0 & b3_5=0 & b0_2 { SP = SP + ((6 - b0_2) << 2); }
-:"[--SP] = (R7:" b3_5 ", P5:" b0_2 ")" is b9_15=2 & bit8=1 & bit7=1 & bit6=1 & b3_5 & b0_2 { SP = SP - ((14 - b3_5 - b0_2) << 2); }
-:"(R7:" b3_5 ", P5:" b0_2 ") = [SP++]" is b9_15=2 & bit8=1 & bit7=1 & bit6=0 & b3_5 & b0_2 { SP = SP + ((14 - b3_5 - b0_2) << 2); }
-
-# Pointer-indexed post-modify memory class (LDSTpmod).
-:^rd6 "= [" rp0 "++" rp3 "]" is b12_15=8 & bit11=0 & b9_10=0 & rd6 & rp0 & rp3 { rd6 = *:4 rp0; rp0 = rp0 + rp3; }
-:"[" rp0 "++" rp3 "] =" rd6 is b12_15=8 & bit11=1 & b9_10=0 & rd6 & rp0 & rp3 { *:4 rp0 = rd6; rp0 = rp0 + rp3; }
-:^rlo6 "= W[" rp0 "++" rp3 "]" is b12_15=8 & bit11=0 & b9_10=1 & rlo6 & rp0 & rp3 { rlo6 = *:2 rp0; }
-:"W[" rp0 "++" rp3 "] =" rlo6 is b12_15=8 & bit11=1 & b9_10=1 & rlo6 & rp0 & rp3 { *:2 rp0 = rlo6; }
-:^rhi6 "= W[" rp0 "++" rp3 "]" is b12_15=8 & bit11=0 & b9_10=2 & rhi6 & rp0 & rp3 { rhi6 = *:2 rp0; }
-:"W[" rp0 "++" rp3 "] =" rhi6 is b12_15=8 & bit11=1 & b9_10=2 & rhi6 & rp0 & rp3 { *:2 rp0 = rhi6; }
-:^rd6 "= W[" rp0 "++" rp3 "] (Z)" is b12_15=8 & bit11=0 & b9_10=3 & rd6 & rp0 & rp3 { rd6 = zext(*:2 rp0); rp0 = rp0 + rp3; }
-:^rd6 "= W[" rp0 "++" rp3 "] (X)" is b12_15=8 & bit11=1 & b9_10=3 & rd6 & rp0 & rp3 { rd6 = sext(*:2 rp0); rp0 = rp0 + rp3; }
-:^DST_R "= [" PTR3 "++]" is b12_15=9 & b10_11=0 & bit9=0 & b7_8=0 & bit6=0 & DST_R & PTR3 { DST_R = *:4 PTR3; PTR3 = PTR3 + 4; }
-:^PTR0 "= [" PTR3 "++]" is b12_15=9 & b10_11=0 & bit9=0 & b7_8=0 & bit6=1 & PTR0 & PTR3 { PTR0 = *:4 PTR3; PTR3 = PTR3 + 4; }
-:^DST_R "= [" PTR3 "--]" is b12_15=9 & b10_11=0 & bit9=0 & b7_8=1 & bit6=0 & DST_R & PTR3 { DST_R = *:4 PTR3; PTR3 = PTR3 - 4; }
-:^PTR0 "= [" PTR3 "--]" is b12_15=9 & b10_11=0 & bit9=0 & b7_8=1 & bit6=1 & PTR0 & PTR3 { PTR0 = *:4 PTR3; PTR3 = PTR3 - 4; }
-:"[" PTR3 "++] =" DST_R is b12_15=9 & b10_11=0 & bit9=1 & b7_8=0 & bit6=0 & DST_R & PTR3 { *:4 PTR3 = DST_R; PTR3 = PTR3 + 4; }
-:"[" PTR3 "++] =" PTR0 is b12_15=9 & b10_11=0 & bit9=1 & b7_8=0 & bit6=1 & PTR0 & PTR3 { *:4 PTR3 = PTR0; PTR3 = PTR3 + 4; }
-:"[" PTR3 "--] =" DST_R is b12_15=9 & b10_11=0 & bit9=1 & b7_8=1 & bit6=0 & DST_R & PTR3 { *:4 PTR3 = DST_R; PTR3 = PTR3 - 4; }
-:"[" PTR3 "--] =" PTR0 is b12_15=9 & b10_11=0 & bit9=1 & b7_8=1 & bit6=1 & PTR0 & PTR3 { *:4 PTR3 = PTR0; PTR3 = PTR3 - 4; }
-:^DST_R "= W[" PTR3 "++] (Z)" is b12_15=9 & b10_11=1 & bit9=0 & b7_8=0 & bit6=0 & DST_R & PTR3 { DST_R = zext(*:2 PTR3); PTR3 = PTR3 + 2; }
-:^DST_R "= W[" PTR3 "++] (X)" is b12_15=9 & b10_11=1 & bit9=0 & b7_8=0 & bit6=1 & DST_R & PTR3 { DST_R = sext(*:2 PTR3); PTR3 = PTR3 + 2; }
-:"W[" PTR3 "++] =" DST_R is b12_15=9 & b10_11=1 & bit9=1 & b7_8=0 & bit6=0 & DST_R & PTR3 { local h:2 = DST_R:2; *:2 PTR3 = h; PTR3 = PTR3 + 2; }
-:^DST_R "= W[" PTR3 "--] (Z)" is b12_15=9 & b10_11=1 & bit9=0 & b7_8=1 & bit6=0 & DST_R & PTR3 { DST_R = zext(*:2 PTR3); PTR3 = PTR3 - 2; }
-:^DST_R "= W[" PTR3 "--] (X)" is b12_15=9 & b10_11=1 & bit9=0 & b7_8=1 & bit6=1 & DST_R & PTR3 { DST_R = sext(*:2 PTR3); PTR3 = PTR3 - 2; }
-:"W[" PTR3 "--] =" DST_R is b12_15=9 & b10_11=1 & bit9=1 & b7_8=1 & bit6=0 & DST_R & PTR3 { local h:2 = DST_R:2; *:2 PTR3 = h; PTR3 = PTR3 - 2; }
-:^DST_R "= B[" PTR3 "++] (Z)" is b12_15=9 & b10_11=2 & bit9=0 & b7_8=0 & bit6=0 & DST_R & PTR3 { DST_R = zext(*:1 PTR3); PTR3 = PTR3 + 1; }
-:^DST_R "= B[" PTR3 "++] (X)" is b12_15=9 & b10_11=2 & bit9=0 & b7_8=0 & bit6=1 & DST_R & PTR3 { DST_R = sext(*:1 PTR3); PTR3 = PTR3 + 1; }
-:"B[" PTR3 "++] =" DST_R is b12_15=9 & b10_11=2 & bit9=1 & b7_8=0 & bit6=0 & DST_R & PTR3 { local b:1 = DST_R:1; *:1 PTR3 = b; PTR3 = PTR3 + 1; }
-:^DST_R "= B[" PTR3 "--] (Z)" is b12_15=9 & b10_11=2 & bit9=0 & b7_8=1 & bit6=0 & DST_R & PTR3 { DST_R = zext(*:1 PTR3); PTR3 = PTR3 - 1; }
-:^DST_R "= B[" PTR3 "--] (X)" is b12_15=9 & b10_11=2 & bit9=0 & b7_8=1 & bit6=1 & DST_R & PTR3 { DST_R = sext(*:1 PTR3); PTR3 = PTR3 - 1; }
-:"B[" PTR3 "--] =" DST_R is b12_15=9 & b10_11=2 & bit9=1 & b7_8=1 & bit6=0 & DST_R & PTR3 { local b:1 = DST_R:1; *:1 PTR3 = b; PTR3 = PTR3 - 1; }
-
-# DAG loads/stores through I0-I3. The full-width forms dominate firmware
-# startup and table walkers; indexed aop=3 uses the selected M register.
-:^rd0 "= [" ireg3 "++]" is b10_15=0x27 & bit9=0 & b7_8=0 & b5_6=0 & rd0 & ireg3 { rd0 = *:4 ireg3; ireg3 = ireg3 + 4; }
-:^rd0 "= [" ireg3 "--]" is b10_15=0x27 & bit9=0 & b7_8=1 & b5_6=0 & rd0 & ireg3 { rd0 = *:4 ireg3; ireg3 = ireg3 - 4; }
-:^rd0 "= [" ireg3 "]" is b10_15=0x27 & bit9=0 & b7_8=2 & b5_6=0 & rd0 & ireg3 { rd0 = *:4 ireg3; }
-:"[" ireg3 "++] =" rd0 is b10_15=0x27 & bit9=1 & b7_8=0 & b5_6=0 & rd0 & ireg3 { *:4 ireg3 = rd0; ireg3 = ireg3 + 4; }
-:"[" ireg3 "--] =" rd0 is b10_15=0x27 & bit9=1 & b7_8=1 & b5_6=0 & rd0 & ireg3 { *:4 ireg3 = rd0; ireg3 = ireg3 - 4; }
-:"[" ireg3 "] =" rd0 is b10_15=0x27 & bit9=1 & b7_8=2 & b5_6=0 & rd0 & ireg3 { *:4 ireg3 = rd0; }
-:^rd0 "= [" ireg3 "++" mreg5 "]" is b10_15=0x27 & bit9=0 & b7_8=3 & rd0 & ireg3 & mreg5 { rd0 = *:4 ireg3; ireg3 = ireg3 + mreg5; }
-:"[" ireg3 "++" mreg5 "] =" rd0 is b10_15=0x27 & bit9=1 & b7_8=3 & rd0 & ireg3 & mreg5 { *:4 ireg3 = rd0; ireg3 = ireg3 + mreg5; }
-
-# Condition-code comparisons (CCflag).
-:CC "=" DST_R "==" SRC_R is b11_15=1 & bit10=0 & b7_9=0 & bit6=0 & DST_R & SRC_R { CC = DST_R == SRC_R; }
-:CC "=" DST_R "s<" SRC_R is b11_15=1 & bit10=0 & b7_9=1 & bit6=0 & DST_R & SRC_R { CC = DST_R s< SRC_R; }
-:CC "=" DST_R "s<=" SRC_R is b11_15=1 & bit10=0 & b7_9=2 & bit6=0 & DST_R & SRC_R { CC = DST_R s<= SRC_R; }
-:CC "=" DST_R "<" SRC_R is b11_15=1 & bit10=0 & b7_9=3 & bit6=0 & DST_R & SRC_R { CC = DST_R < SRC_R; }
-:CC "=" DST_R "<=" SRC_R is b11_15=1 & bit10=0 & b7_9=4 & bit6=0 & DST_R & SRC_R { CC = DST_R <= SRC_R; }
-:CC "=" PTR0 "==" PTR3 is b11_15=1 & bit10=0 & b7_9=0 & bit6=1 & PTR0 & PTR3 { CC = PTR0 == PTR3; }
-:CC "=" PTR0 "s<" PTR3 is b11_15=1 & bit10=0 & b7_9=1 & bit6=1 & PTR0 & PTR3 { CC = PTR0 s< PTR3; }
-:CC "=" PTR0 "s<=" PTR3 is b11_15=1 & bit10=0 & b7_9=2 & bit6=1 & PTR0 & PTR3 { CC = PTR0 s<= PTR3; }
-:CC "=" PTR0 "<" PTR3 is b11_15=1 & bit10=0 & b7_9=3 & bit6=1 & PTR0 & PTR3 { CC = PTR0 < PTR3; }
-:CC "=" PTR0 "<=" PTR3 is b11_15=1 & bit10=0 & b7_9=4 & bit6=1 & PTR0 & PTR3 { CC = PTR0 <= PTR3; }
-:CC "=" DST_R "==" b3_5s is b11_15=1 & bit10=1 & b7_9=0 & bit6=0 & DST_R & b3_5s { CC = DST_R == b3_5s; }
-:CC "=" DST_R "s<" b3_5s is b11_15=1 & bit10=1 & b7_9=1 & bit6=0 & DST_R & b3_5s { CC = DST_R s< b3_5s; }
-:CC "=" DST_R "s<=" b3_5s is b11_15=1 & bit10=1 & b7_9=2 & bit6=0 & DST_R & b3_5s { CC = DST_R s<= b3_5s; }
-:CC "=" DST_R "<" b3_5 is b11_15=1 & bit10=1 & b7_9=3 & bit6=0 & DST_R & b3_5 { CC = DST_R < b3_5; }
-:CC "=" DST_R "<=" b3_5 is b11_15=1 & bit10=1 & b7_9=4 & bit6=0 & DST_R & b3_5 { CC = DST_R <= b3_5; }
-:CC "=" PTR0 "==" b3_5s is b11_15=1 & bit10=1 & b7_9=0 & bit6=1 & PTR0 & b3_5s { CC = PTR0 == b3_5s; }
-:CC "=" PTR0 "s<" b3_5s is b11_15=1 & bit10=1 & b7_9=1 & bit6=1 & PTR0 & b3_5s { CC = PTR0 s< b3_5s; }
-:CC "=" PTR0 "s<=" b3_5s is b11_15=1 & bit10=1 & b7_9=2 & bit6=1 & PTR0 & b3_5s { CC = PTR0 s<= b3_5s; }
-:CC "=" PTR0 "<" b3_5 is b11_15=1 & bit10=1 & b7_9=3 & bit6=1 & PTR0 & b3_5 { CC = PTR0 < b3_5; }
-:CC "=" PTR0 "<=" b3_5 is b11_15=1 & bit10=1 & b7_9=4 & bit6=1 & PTR0 & b3_5 { CC = PTR0 <= b3_5; }
-
-# Base-register loads/stores without modification (LDST aop=2).
-:^DST_R "= [" PTR3 "]" is b12_15=9 & b10_11=0 & bit9=0 & b7_8=2 & bit6=0 & DST_R & PTR3 { DST_R = *:4 PTR3; }
-:^PTR0 "= [" PTR3 "]" is b12_15=9 & b10_11=0 & bit9=0 & b7_8=2 & bit6=1 & PTR0 & PTR3 { PTR0 = *:4 PTR3; }
-:^DST_R "= W[" PTR3 "] (Z)" is b12_15=9 & b10_11=1 & bit9=0 & b7_8=2 & bit6=0 & DST_R & PTR3 { DST_R = zext(*:2 PTR3); }
-:^DST_R "= W[" PTR3 "] (X)" is b12_15=9 & b10_11=1 & bit9=0 & b7_8=2 & bit6=1 & DST_R & PTR3 { DST_R = sext(*:2 PTR3); }
-:^DST_R "= B[" PTR3 "] (Z)" is b12_15=9 & b10_11=2 & bit9=0 & b7_8=2 & bit6=0 & DST_R & PTR3 { DST_R = zext(*:1 PTR3); }
-:^DST_R "= B[" PTR3 "] (X)" is b12_15=9 & b10_11=2 & bit9=0 & b7_8=2 & bit6=1 & DST_R & PTR3 { DST_R = sext(*:1 PTR3); }
-:"[" PTR3 "] =" DST_R is b12_15=9 & b10_11=0 & bit9=1 & b7_8=2 & bit6=0 & DST_R & PTR3 { *:4 PTR3 = DST_R; }
-:"[" PTR3 "] =" PTR0 is b12_15=9 & b10_11=0 & bit9=1 & b7_8=2 & bit6=1 & PTR0 & PTR3 { *:4 PTR3 = PTR0; }
-:"W[" PTR3 "] =" DST_R is b12_15=9 & b10_11=1 & bit9=1 & b7_8=2 & bit6=0 & DST_R & PTR3 { local h:2 = DST_R:2; *:2 PTR3 = h; }
-:"B[" PTR3 "] =" DST_R is b12_15=9 & b10_11=2 & bit9=1 & b7_8=2 & bit6=0 & DST_R & PTR3 { local b:1 = DST_R:1; *:1 PTR3 = b; }
-
-# Four-bit scaled-offset loads/stores (LDSTii, 0xa000-0xb7ff).
-:^DST_R "= [" PTR3 "+" b6_9 "]" is b13_15=5 & bit12=0 & b10_11=0 & DST_R & PTR3 & b6_9 { local a:4 = PTR3 + (b6_9 << 2); DST_R = *:4 a; }
-:"[" PTR3 "+" b6_9 "] =" DST_R is b13_15=5 & bit12=1 & b10_11=0 & DST_R & PTR3 & b6_9 { local a:4 = PTR3 + (b6_9 << 2); *:4 a = DST_R; }
-:^DST_R "= W[" PTR3 "+" b6_9 "] (Z)" is b13_15=5 & bit12=0 & b10_11=1 & DST_R & PTR3 & b6_9 { local a:4 = PTR3 + (b6_9 << 1); DST_R = zext(*:2 a); }
-:"W[" PTR3 "+" b6_9 "] =" DST_R is b13_15=5 & bit12=1 & b10_11=1 & DST_R & PTR3 & b6_9 { local a:4 = PTR3 + (b6_9 << 1); local h:2 = DST_R:2; *:2 a = h; }
-:^DST_R "= W[" PTR3 "+" b6_9 "] (X)" is b13_15=5 & bit12=0 & b10_11=2 & DST_R & PTR3 & b6_9 { local a:4 = PTR3 + (b6_9 << 1); DST_R = sext(*:2 a); }
-:^PTR0 "= [" PTR3 "+" b6_9 "]" is b13_15=5 & bit12=0 & b10_11=3 & PTR0 & PTR3 & b6_9 { local a:4 = PTR3 + (b6_9 << 2); PTR0 = *:4 a; }
-:"[" PTR3 "+" b6_9 "] =" PTR0 is b13_15=5 & bit12=1 & b10_11=3 & PTR0 & PTR3 & b6_9 { local a:4 = PTR3 + (b6_9 << 2); *:4 a = PTR0; }
-
-# Signed 16-bit offset forms (LDSTidxI). The displacement is scaled by access
-# width for words and longwords and is byte-granular for byte accesses.
-:^rd0 "= [" rp3 "+" simm16 "]" is b10_15=0x39 & bit9=0 & bit8=0 & b6_7=0 & rd0 & rp3; simm16 { local a:4 = rp3 + (simm16 << 2); rd0 = *:4 a; }
-:^rp0 "= [" rp3 "+" simm16 "]" is b10_15=0x39 & bit9=0 & bit8=1 & b6_7=0 & rp0 & rp3; simm16 { local a:4 = rp3 + (simm16 << 2); rp0 = *:4 a; }
-:^rd0 "= W[" rp3 "+" simm16 "] (Z)" is b10_15=0x39 & bit9=0 & bit8=0 & b6_7=1 & rd0 & rp3; simm16 { local a:4 = rp3 + (simm16 << 1); rd0 = zext(*:2 a); }
-:^rd0 "= W[" rp3 "+" simm16 "] (X)" is b10_15=0x39 & bit9=0 & bit8=1 & b6_7=1 & rd0 & rp3; simm16 { local a:4 = rp3 + (simm16 << 1); rd0 = sext(*:2 a); }
-:^rd0 "= B[" rp3 "+" simm16 "] (Z)" is b10_15=0x39 & bit9=0 & bit8=0 & b6_7=2 & rd0 & rp3; simm16 { local a:4 = rp3 + simm16; rd0 = zext(*:1 a); }
-:^rd0 "= B[" rp3 "+" simm16 "] (X)" is b10_15=0x39 & bit9=0 & bit8=1 & b6_7=2 & rd0 & rp3; simm16 { local a:4 = rp3 + simm16; rd0 = sext(*:1 a); }
-:"[" rp3 "+" simm16 "] =" rd0 is b10_15=0x39 & bit9=1 & bit8=0 & b6_7=0 & rd0 & rp3; simm16 { local a:4 = rp3 + (simm16 << 2); *:4 a = rd0; }
-:"[" rp3 "+" simm16 "] =" rp0 is b10_15=0x39 & bit9=1 & bit8=1 & b6_7=0 & rp0 & rp3; simm16 { local a:4 = rp3 + (simm16 << 2); *:4 a = rp0; }
-:"W[" rp3 "+" simm16 "] =" rd0 is b10_15=0x39 & bit9=1 & bit8=0 & b6_7=1 & rd0 & rp3; simm16 { local a:4 = rp3 + (simm16 << 1); local h:2 = rd0:2; *:2 a = h; }
-:"B[" rp3 "+" simm16 "] =" rd0 is b10_15=0x39 & bit9=1 & bit8=0 & b6_7=2 & rd0 & rp3; simm16 { local a:4 = rp3 + simm16; local b:1 = rd0:1; *:1 a = b; }
-
-# FP-relative frame accesses.
-:^DPREG "= [FP -" b4_8 "]" is b10_15=0x2e & bit9=0 & DPREG & b4_8 { local a:4 = FP - ((b4_8 + 1) << 2); DPREG = *:4 a; }
-:"[FP -" b4_8 "] =" DPREG is b10_15=0x2e & bit9=1 & DPREG & b4_8 { local a:4 = FP - ((b4_8 + 1) << 2); *:4 a = DPREG; }
-
-# Parallel issue slots. GNU binutils shows that the first slot is almost always
-# an ordinary compiler-generated memory operation and the second is normally
-# NOP in the CDJ corpus. Unknown slots remain visible as PAR16A/PAR16B.
-PAR_A: "NOP" is pa_op=0 { }
-PAR_A: ^pa_r0 "= [" pa_p3 "]" is pa_b12_15=9 & pa_b10_11=0 & pa_bit9=0 & pa_b7_8=2 & pa_bit6=0 & pa_r0 & pa_p3 { pa_r0 = *:4 pa_p3; }
-PAR_A: ^pa_p0 "= [" pa_p3 "]" is pa_b12_15=9 & pa_b10_11=0 & pa_bit9=0 & pa_b7_8=2 & pa_bit6=1 & pa_p0 & pa_p3 { pa_p0 = *:4 pa_p3; }
-PAR_A: "[" pa_p3 "] =" pa_r0 is pa_b12_15=9 & pa_b10_11=0 & pa_bit9=1 & pa_b7_8=2 & pa_bit6=0 & pa_r0 & pa_p3 { *:4 pa_p3 = pa_r0; }
-PAR_A: "[" pa_p3 "] =" pa_p0 is pa_b12_15=9 & pa_b10_11=0 & pa_bit9=1 & pa_b7_8=2 & pa_bit6=1 & pa_p0 & pa_p3 { *:4 pa_p3 = pa_p0; }
-PAR_A: ^pa_r0 "= W[" pa_p3 "] (Z)" is pa_b12_15=9 & pa_b10_11=1 & pa_bit9=0 & pa_b7_8=2 & pa_bit6=0 & pa_r0 & pa_p3 { pa_r0 = zext(*:2 pa_p3); }
-PAR_A: ^pa_r0 "= W[" pa_p3 "] (X)" is pa_b12_15=9 & pa_b10_11=1 & pa_bit9=0 & pa_b7_8=2 & pa_bit6=1 & pa_r0 & pa_p3 { pa_r0 = sext(*:2 pa_p3); }
-PAR_A: ^pa_r0 "= B[" pa_p3 "] (Z)" is pa_b12_15=9 & pa_b10_11=2 & pa_bit9=0 & pa_b7_8=2 & pa_bit6=0 & pa_r0 & pa_p3 { pa_r0 = zext(*:1 pa_p3); }
-PAR_A: ^pa_r0 "= B[" pa_p3 "] (X)" is pa_b12_15=9 & pa_b10_11=2 & pa_bit9=0 & pa_b7_8=2 & pa_bit6=1 & pa_r0 & pa_p3 { pa_r0 = sext(*:1 pa_p3); }
-PAR_A: ^pa_r0 "= [" pa_p3 "+" pa_b6_9 "]" is pa_b13_15=5 & pa_bit12=0 & pa_b10_11=0 & pa_r0 & pa_p3 & pa_b6_9 { local a:4 = pa_p3 + (pa_b6_9 << 2); pa_r0 = *:4 a; }
-PAR_A: "[" pa_p3 "+" pa_b6_9 "] =" pa_r0 is pa_b13_15=5 & pa_bit12=1 & pa_b10_11=0 & pa_r0 & pa_p3 & pa_b6_9 { local a:4 = pa_p3 + (pa_b6_9 << 2); *:4 a = pa_r0; }
-PAR_A: ^pa_r0 "= W[" pa_p3 "+" pa_b6_9 "] (Z)" is pa_b13_15=5 & pa_bit12=0 & pa_b10_11=1 & pa_r0 & pa_p3 & pa_b6_9 { local a:4 = pa_p3 + (pa_b6_9 << 1); pa_r0 = zext(*:2 a); }
-PAR_A: ^pa_dp0 "= [FP -" pa_b4_8 "]" is pa_b10_15=0x2e & pa_bit9=0 & pa_dp0 & pa_b4_8 { local a:4 = FP - ((pa_b4_8 + 1) << 2); pa_dp0 = *:4 a; }
-PAR_A: "[FP -" pa_b4_8 "] =" pa_dp0 is pa_b10_15=0x2e & pa_bit9=1 & pa_dp0 & pa_b4_8 { local a:4 = FP - ((pa_b4_8 + 1) << 2); *:4 a = pa_dp0; }
-PAR_A: "PAR16A" pa_op is pa_op { }
-
-PAR_B: "NOP" is pb_op=0 { }
-PAR_B: ^pb_r0 "= [" pb_p3 "]" is pb_b12_15=9 & pb_b10_11=0 & pb_bit9=0 & pb_b7_8=2 & pb_bit6=0 & pb_r0 & pb_p3 { pb_r0 = *:4 pb_p3; }
-PAR_B: ^pb_p0 "= [" pb_p3 "]" is pb_b12_15=9 & pb_b10_11=0 & pb_bit9=0 & pb_b7_8=2 & pb_bit6=1 & pb_p0 & pb_p3 { pb_p0 = *:4 pb_p3; }
-PAR_B: "[" pb_p3 "] =" pb_r0 is pb_b12_15=9 & pb_b10_11=0 & pb_bit9=1 & pb_b7_8=2 & pb_bit6=0 & pb_r0 & pb_p3 { *:4 pb_p3 = pb_r0; }
-PAR_B: "[" pb_p3 "] =" pb_p0 is pb_b12_15=9 & pb_b10_11=0 & pb_bit9=1 & pb_b7_8=2 & pb_bit6=1 & pb_p0 & pb_p3 { *:4 pb_p3 = pb_p0; }
-PAR_B: ^pb_r0 "= W[" pb_p3 "] (Z)" is pb_b12_15=9 & pb_b10_11=1 & pb_bit9=0 & pb_b7_8=2 & pb_bit6=0 & pb_r0 & pb_p3 { pb_r0 = zext(*:2 pb_p3); }
-PAR_B: ^pb_r0 "= B[" pb_p3 "] (Z)" is pb_b12_15=9 & pb_b10_11=2 & pb_bit9=0 & pb_b7_8=2 & pb_bit6=0 & pb_r0 & pb_p3 { pb_r0 = zext(*:1 pb_p3); }
-PAR_B: ^pb_r0 "= [" pb_p3 "+" pb_b6_9 "]" is pb_b13_15=5 & pb_bit12=0 & pb_b10_11=0 & pb_r0 & pb_p3 & pb_b6_9 { local a:4 = pb_p3 + (pb_b6_9 << 2); pb_r0 = *:4 a; }
-PAR_B: "[" pb_p3 "+" pb_b6_9 "] =" pb_r0 is pb_b13_15=5 & pb_bit12=1 & pb_b10_11=0 & pb_r0 & pb_p3 & pb_b6_9 { local a:4 = pb_p3 + (pb_b6_9 << 2); *:4 a = pb_r0; }
-PAR_B: ^pb_dp0 "= [FP -" pb_b4_8 "]" is pb_b10_15=0x2e & pb_bit9=0 & pb_dp0 & pb_b4_8 { local a:4 = FP - ((pb_b4_8 + 1) << 2); pb_dp0 = *:4 a; }
-PAR_B: "[FP -" pb_b4_8 "] =" pb_dp0 is pb_b10_15=0x2e & pb_bit9=1 & pb_dp0 & pb_b4_8 { local a:4 = FP - ((pb_b4_8 + 1) << 2); *:4 a = pb_dp0; }
-PAR_B: "PAR16B" pb_op is pb_op { }
-
-# Generic placeholders preserve synchronization for unlifted classes. A
-# multi-issue DSP32 word is an eight-byte packet, not a four-byte instruction.
-:DSP32_MULTI op "," imm16 "||" PAR_A "||" PAR_B is b12_15=0xc & bit11=1 & op; imm16; PAR_A; PAR_B { build PAR_A; build PAR_B; }
-:DSP32 op "," imm16 is b12_15=0xc & bit11=0 & op; imm16 { }
-:BFIN32 op "," imm16 is b12_15=0xe & op; imm16 { }
-:BFIN16 op is op { }
+@include "bfin_macros.sinc"
+@include "bfin_16.sinc"
+@include "bfin_32.sinc"
+@include "bfin_dsp.sinc"
+@include "bfin_par.sinc"
+@include "bfin_loop.sinc"

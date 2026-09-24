@@ -1,0 +1,475 @@
+# 16-bit instructions. Classes allowed in a multi-issue slot (as GNU objdump
+# accepts them) live in the S16 subtable; the others are root constructors.
+
+# ---- operand helpers -------------------------------------------------------
+
+REL10: dest is w0_9s [ dest = inst_start + w0_9s * 2; ] { export *:4 dest; }
+REL12: dest is w0_11s [ dest = inst_start + w0_11s * 2; ] { export *:4 dest; }
+
+# Register stored by a load/store slot: inside a multi-issue packet (par=1) the
+# value is read from the pre-packet snapshot, because the packet's DSP operation
+# runs first and may overwrite it.
+SV0: dr0 is par=0 & dr0 { export dr0; }
+SV0: dr0 is par=1 & dr0 & sd0 { export sd0; }
+SVL0: dl0 is par=0 & dl0 { export dl0; }
+SVL0: dl0 is par=1 & dl0 & sdl0 { export sdl0; }
+SVH0: dh0 is par=0 & dh0 { export dh0; }
+SVH0: dh0 is par=1 & dh0 & sdh0 { export sdh0; }
+SV6: dr6 is par=0 & dr6 { export dr6; }
+SV6: dr6 is par=1 & dr6 & sd6 { export sd6; }
+SVL6: dl6 is par=0 & dl6 { export dl6; }
+SVL6: dl6 is par=1 & dl6 & sdl6 { export sdl6; }
+SVH6: dh6 is par=0 & dh6 { export dh6; }
+SVH6: dh6 is par=1 & dh6 & sdh6 { export sdh6; }
+SVDP0: dp0 is par=0 & dp0 { export dp0; }
+SVDP0: dp0 is par=1 & dp0 & sdp0 { export sdp0; }
+
+# Address registers read by a load/store slot, likewise from the snapshot.
+PV0: pr0 is par=0 & pr0 { export pr0; }
+PV0: pr0 is par=1 & pr0 & sp0 { export sp0; }
+PV3: pr3 is par=0 & pr3 { export pr3; }
+PV3: pr3 is par=1 & pr3 & sp3 { export sp3; }
+IV0: ir0 is par=0 & ir0 { export ir0; }
+IV0: ir0 is par=1 & ir0 & si0 { export si0; }
+IV3: ir3 is par=0 & ir3 { export ir3; }
+IV3: ir3 is par=1 & ir3 & si3 { export si3; }
+MV2: mr2 is par=0 & mr2 { export mr2; }
+MV2: mr2 is par=1 & mr2 & sm2 { export sm2; }
+MV5: mr5 is par=0 & mr5 { export mr5; }
+MV5: mr5 is par=1 & mr5 & sm5 { export sm5; }
+FPV: is par=0 { export FP; }
+FPV: is par=1 { export FP_P; }
+
+# All-register source/destination of a register move (group, register).
+AS: dr0 is w6_8=0 & dr0 { export dr0; }
+AS: pr0 is w6_8=1 & pr0 { export pr0; }
+AS: im0 is w6_8=2 & im0 { export im0; }
+AS: bl0 is w6_8=3 & bl0 { export bl0; }
+AS: "A0.X" is w6_8=4 & w0_2=0 { local t:4 = sext(A0.X); export t; }
+AS: "A0.W" is w6_8=4 & w0_2=1 { export A0.W; }
+AS: "A1.X" is w6_8=4 & w0_2=2 { local t:4 = sext(A1.X); export t; }
+AS: "A1.W" is w6_8=4 & w0_2=3 { export A1.W; }
+AS: "ASTAT" is w6_8=4 & w0_2=6 { local t:4; packastat(t); export t; }
+AS: "RETS" is w6_8=4 & w0_2=7 { export RETS; }
+AS: lc0 is w6_8=6 & lc0 { export lc0; }
+AS: sy0 is w6_8=7 & sy0 { export sy0; }
+
+# Destinations take their value from MV.
+AD: dr3 is w9_11=0 & dr3 { dr3 = MV; }
+AD: pr3 is w9_11=1 & pr3 { pr3 = MV; }
+AD: im3 is w9_11=2 & im3 { im3 = MV; }
+AD: bl3 is w9_11=3 & bl3 { bl3 = MV; }
+AD: "A0.X" is w9_11=4 & w3_5=0 { A0.X = MV:1; }
+AD: "A0.W" is w9_11=4 & w3_5=1 { A0.W = MV; }
+AD: "A1.X" is w9_11=4 & w3_5=2 { A1.X = MV:1; }
+AD: "A1.W" is w9_11=4 & w3_5=3 { A1.W = MV; }
+AD: "ASTAT" is w9_11=4 & w3_5=6 { unpackastat(MV); }
+AD: "RETS" is w9_11=4 & w3_5=7 { RETS = MV; }
+AD: lc3 is w9_11=6 & lc3 { lc3 = MV; }
+AD: "LT0" is w9_11=6 & w3_5=1 { LT0 = MV & 0xfffffffe; }
+AD: "LT1" is w9_11=6 & w3_5=4 { LT1 = MV & 0xfffffffe; }
+AD: sy3 is w9_11=7 & sy3 { sy3 = MV; }
+AD: "SEQSTAT" is w9_11=7 & w3_5=1 { }
+
+# Push/pop register (group and register as one 6-bit field).
+PS: psr is psr { export psr; }
+PS: "A0.X" is w0_5=32 { local t:4 = sext(A0.X); export t; }
+PS: "A1.X" is w0_5=34 { local t:4 = sext(A1.X); export t; }
+PS: "ASTAT" is w0_5=38 { local t:4; packastat(t); export t; }
+
+PD: ppr is ppr { ppr = MV; }
+PD: "A0.X" is w0_5=32 { A0.X = MV:1; }
+PD: "A1.X" is w0_5=34 { A1.X = MV:1; }
+PD: "ASTAT" is w0_5=38 { unpackastat(MV); }
+PD: "LT0" is w0_5=49 { LT0 = MV & 0xfffffffe; }
+PD: "LT1" is w0_5=52 { LT1 = MV & 0xfffffffe; }
+PD: "SEQSTAT" is w0_5=57 { }
+
+# Data or pointer register selected by a separate bit (gregs).
+GD: dr3 is w7=0 & dr3 { export dr3; }
+GD: pr3 is w7=1 & pr3 { export pr3; }
+GS: dr0 is w6=0 & dr0 { export dr0; }
+GS: pr0 is w6=1 & pr0 { export pr0; }
+
+# Pointer and index register equal (PEQ) or different (PNE). A pointer load
+# through itself with post-modify (Pn = [Pn++]) is not a valid encoding.
+PEQ: is (w3_5=0 & w0_2=0) | (w3_5=1 & w0_2=1) | (w3_5=2 & w0_2=2) | (w3_5=3 & w0_2=3) | (w3_5=4 & w0_2=4) | (w3_5=5 & w0_2=5) | (w3_5=6 & w0_2=6) | (w3_5=7 & w0_2=7) { }
+PNE: is (w3_5=0 & w0_2!=0) | (w3_5=1 & w0_2!=1) | (w3_5=2 & w0_2!=2) | (w3_5=3 & w0_2!=3)
+      | (w3_5=4 & w0_2!=4) | (w3_5=5 & w0_2!=5) | (w3_5=6 & w0_2!=6) | (w3_5=7 & w0_2!=7) { }
+# LDSTpmod post-modify; Pn ++ Pn leaves the pointer unchanged.
+PMOD: is PEQ { }
+PMOD: is PNE & pr0 & PV0 & PV3 { pr0 = PV0 + PV3; }
+
+# Scaled offsets, shown as byte offsets.
+U4S4: val is w6_9 [ val = w6_9 << 2; ] { export *[const]:4 val; }
+U4S2: val is w6_9 [ val = w6_9 << 1; ] { export *[const]:4 val; }
+FPOFF: val is w4_8 [ val = (w4_8 - 32) * 4; ] { export *[const]:4 val; }
+
+# ---- program control ---------------------------------------------------------
+
+INSN:"NOP" is op=0x0000 { }
+INSN:"RTS" is op=0x0010 { return [RETS]; }
+INSN:"RTI" is op=0x0011 { return [RETI]; }
+INSN:"RTX" is op=0x0012 { return [RETX]; }
+INSN:"RTN" is op=0x0013 { return [RETN]; }
+INSN:"RTE" is op=0x0014 { return [RETE]; }
+INSN:"IDLE" is op=0x0020 { idle(); }
+INSN:"CSYNC" is op=0x0023 { }
+INSN:"SSYNC" is op=0x0024 { }
+INSN:"EMUEXCPT" is op=0x0025 { emuexcpt(); }
+INSN:"CLI" dr0 is w4_15=0x003 & w3=0 & dr0 { dr0 = IMASK; IMASK = 0; }
+INSN:"STI" dr0 is w4_15=0x004 & w3=0 & dr0 { IMASK = dr0; }
+INSN:"JUMP" "(" pr0 ")" is w4_15=0x005 & w3=0 & pr0 { goto [pr0]; }
+INSN:"CALL" "(" pr0 ")" is w4_15=0x006 & w3=0 & pr0 { RETS = inst_next; call [pr0]; }
+INSN:"CALL" "(PC +" pr0 ")" is w4_15=0x007 & w3=0 & pr0 { local t:4 = inst_start + pr0; RETS = inst_next; call [t]; }
+INSN:"JUMP" "(PC +" pr0 ")" is w4_15=0x008 & w3=0 & pr0 { local t:4 = inst_start + pr0; goto [t]; }
+INSN:"RAISE" w0_3 is w4_15=0x009 & w0_3 { raise(w0_3:1); }
+INSN:"EXCPT" w0_3 is w4_15=0x00a & w0_3 { excpt(w0_3:1); }
+INSN:"TESTSET" "(" pr0 ")" is w4_15=0x00b & w3=0 & w0_2<6 & pr0 { local b:1 = *:1 pr0; CC = b == 0; *:1 pr0 = b | 0x80; }
+
+# Cache control (CaCTRL). The ++ forms step by one 32-byte cache line.
+INSN:"PREFETCH" "[" pr0 "]" is w6_15=0x009 & w5=0 & w3_4=0 & pr0 { prefetch(pr0); }
+INSN:"FLUSHINV" "[" pr0 "]" is w6_15=0x009 & w5=0 & w3_4=1 & pr0 { flushinv(pr0); }
+INSN:"FLUSH" "[" pr0 "]" is w6_15=0x009 & w5=0 & w3_4=2 & pr0 { flush(pr0); }
+INSN:"IFLUSH" "[" pr0 "]" is w6_15=0x009 & w5=0 & w3_4=3 & pr0 { iflush(pr0); }
+INSN:"PREFETCH" "[" pr0 "++]" is w6_15=0x009 & w5=1 & w3_4=0 & pr0 { prefetch(pr0); pr0 = pr0 + 32; }
+INSN:"FLUSHINV" "[" pr0 "++]" is w6_15=0x009 & w5=1 & w3_4=1 & pr0 { flushinv(pr0); pr0 = pr0 + 32; }
+INSN:"FLUSH" "[" pr0 "++]" is w6_15=0x009 & w5=1 & w3_4=2 & pr0 { flush(pr0); pr0 = pr0 + 32; }
+INSN:"IFLUSH" "[" pr0 "++]" is w6_15=0x009 & w5=1 & w3_4=3 & pr0 { iflush(pr0); pr0 = pr0 + 32; }
+
+# ---- stack -----------------------------------------------------------------
+
+INSN:"[--SP] =" PS is w7_15=2 & w6=1 & PS { SP = SP - 4; *:4 SP = PS; }
+INSN:^PD "= [SP++]" is w7_15=2 & w6=0 & PD { MV = *:4 SP; SP = SP + 4; build PD; }
+
+# Push multiple stores R(dr) first (highest address) up to R7, then P(pr) to
+# P5; pop multiple reverses that.
+PUSHD: is w3_5=0 { SP = SP - 4; *:4 SP = R0; SP = SP - 4; *:4 SP = R1; SP = SP - 4; *:4 SP = R2; SP = SP - 4; *:4 SP = R3; SP = SP - 4; *:4 SP = R4; SP = SP - 4; *:4 SP = R5; SP = SP - 4; *:4 SP = R6; SP = SP - 4; *:4 SP = R7; }
+PUSHD: is w3_5=1 { SP = SP - 4; *:4 SP = R1; SP = SP - 4; *:4 SP = R2; SP = SP - 4; *:4 SP = R3; SP = SP - 4; *:4 SP = R4; SP = SP - 4; *:4 SP = R5; SP = SP - 4; *:4 SP = R6; SP = SP - 4; *:4 SP = R7; }
+PUSHD: is w3_5=2 { SP = SP - 4; *:4 SP = R2; SP = SP - 4; *:4 SP = R3; SP = SP - 4; *:4 SP = R4; SP = SP - 4; *:4 SP = R5; SP = SP - 4; *:4 SP = R6; SP = SP - 4; *:4 SP = R7; }
+PUSHD: is w3_5=3 { SP = SP - 4; *:4 SP = R3; SP = SP - 4; *:4 SP = R4; SP = SP - 4; *:4 SP = R5; SP = SP - 4; *:4 SP = R6; SP = SP - 4; *:4 SP = R7; }
+PUSHD: is w3_5=4 { SP = SP - 4; *:4 SP = R4; SP = SP - 4; *:4 SP = R5; SP = SP - 4; *:4 SP = R6; SP = SP - 4; *:4 SP = R7; }
+PUSHD: is w3_5=5 { SP = SP - 4; *:4 SP = R5; SP = SP - 4; *:4 SP = R6; SP = SP - 4; *:4 SP = R7; }
+PUSHD: is w3_5=6 { SP = SP - 4; *:4 SP = R6; SP = SP - 4; *:4 SP = R7; }
+PUSHD: is w3_5=7 { SP = SP - 4; *:4 SP = R7; }
+PUSHP: is w0_2=0 { SP = SP - 4; *:4 SP = P0; SP = SP - 4; *:4 SP = P1; SP = SP - 4; *:4 SP = P2; SP = SP - 4; *:4 SP = P3; SP = SP - 4; *:4 SP = P4; SP = SP - 4; *:4 SP = P5; }
+PUSHP: is w0_2=1 { SP = SP - 4; *:4 SP = P1; SP = SP - 4; *:4 SP = P2; SP = SP - 4; *:4 SP = P3; SP = SP - 4; *:4 SP = P4; SP = SP - 4; *:4 SP = P5; }
+PUSHP: is w0_2=2 { SP = SP - 4; *:4 SP = P2; SP = SP - 4; *:4 SP = P3; SP = SP - 4; *:4 SP = P4; SP = SP - 4; *:4 SP = P5; }
+PUSHP: is w0_2=3 { SP = SP - 4; *:4 SP = P3; SP = SP - 4; *:4 SP = P4; SP = SP - 4; *:4 SP = P5; }
+PUSHP: is w0_2=4 { SP = SP - 4; *:4 SP = P4; SP = SP - 4; *:4 SP = P5; }
+PUSHP: is w0_2=5 { SP = SP - 4; *:4 SP = P5; }
+POPD: is w3_5=0 { R7 = *:4 SP; SP = SP + 4; R6 = *:4 SP; SP = SP + 4; R5 = *:4 SP; SP = SP + 4; R4 = *:4 SP; SP = SP + 4; R3 = *:4 SP; SP = SP + 4; R2 = *:4 SP; SP = SP + 4; R1 = *:4 SP; SP = SP + 4; R0 = *:4 SP; SP = SP + 4; }
+POPD: is w3_5=1 { R7 = *:4 SP; SP = SP + 4; R6 = *:4 SP; SP = SP + 4; R5 = *:4 SP; SP = SP + 4; R4 = *:4 SP; SP = SP + 4; R3 = *:4 SP; SP = SP + 4; R2 = *:4 SP; SP = SP + 4; R1 = *:4 SP; SP = SP + 4; }
+POPD: is w3_5=2 { R7 = *:4 SP; SP = SP + 4; R6 = *:4 SP; SP = SP + 4; R5 = *:4 SP; SP = SP + 4; R4 = *:4 SP; SP = SP + 4; R3 = *:4 SP; SP = SP + 4; R2 = *:4 SP; SP = SP + 4; }
+POPD: is w3_5=3 { R7 = *:4 SP; SP = SP + 4; R6 = *:4 SP; SP = SP + 4; R5 = *:4 SP; SP = SP + 4; R4 = *:4 SP; SP = SP + 4; R3 = *:4 SP; SP = SP + 4; }
+POPD: is w3_5=4 { R7 = *:4 SP; SP = SP + 4; R6 = *:4 SP; SP = SP + 4; R5 = *:4 SP; SP = SP + 4; R4 = *:4 SP; SP = SP + 4; }
+POPD: is w3_5=5 { R7 = *:4 SP; SP = SP + 4; R6 = *:4 SP; SP = SP + 4; R5 = *:4 SP; SP = SP + 4; }
+POPD: is w3_5=6 { R7 = *:4 SP; SP = SP + 4; R6 = *:4 SP; SP = SP + 4; }
+POPD: is w3_5=7 { R7 = *:4 SP; SP = SP + 4; }
+POPP: is w0_2=0 { P5 = *:4 SP; SP = SP + 4; P4 = *:4 SP; SP = SP + 4; P3 = *:4 SP; SP = SP + 4; P2 = *:4 SP; SP = SP + 4; P1 = *:4 SP; SP = SP + 4; P0 = *:4 SP; SP = SP + 4; }
+POPP: is w0_2=1 { P5 = *:4 SP; SP = SP + 4; P4 = *:4 SP; SP = SP + 4; P3 = *:4 SP; SP = SP + 4; P2 = *:4 SP; SP = SP + 4; P1 = *:4 SP; SP = SP + 4; }
+POPP: is w0_2=2 { P5 = *:4 SP; SP = SP + 4; P4 = *:4 SP; SP = SP + 4; P3 = *:4 SP; SP = SP + 4; P2 = *:4 SP; SP = SP + 4; }
+POPP: is w0_2=3 { P5 = *:4 SP; SP = SP + 4; P4 = *:4 SP; SP = SP + 4; P3 = *:4 SP; SP = SP + 4; }
+POPP: is w0_2=4 { P5 = *:4 SP; SP = SP + 4; P4 = *:4 SP; SP = SP + 4; }
+POPP: is w0_2=5 { P5 = *:4 SP; SP = SP + 4; }
+
+INSN:"[--SP]" "= (R7:"^w3_5d^", P5:"^w0_2d^")" is w9_15=2 & w8=1 & w7=1 & w6=1 & w3_5d & w0_2d & PUSHD & PUSHP { build PUSHD; build PUSHP; }
+INSN:"[--SP]" "= (R7:"^w3_5d^")" is w9_15=2 & w8=1 & w7=0 & w6=1 & w3_5d & w0_2=0 & PUSHD { build PUSHD; }
+INSN:"[--SP]" "= (P5:"^w0_2d^")" is w9_15=2 & w8=0 & w7=1 & w6=1 & w3_5=0 & w0_2d & PUSHP { build PUSHP; }
+INSN:"(R7:"^w3_5d^", P5:"^w0_2d^") = [SP++]" is w9_15=2 & w8=1 & w7=1 & w6=0 & w3_5d & w0_2d & POPD & POPP { build POPP; build POPD; }
+INSN:"(R7:"^w3_5d^") = [SP++]" is w9_15=2 & w8=1 & w7=0 & w6=0 & w3_5d & w0_2=0 & POPD { build POPD; }
+INSN:"(P5:"^w0_2d^") = [SP++]" is w9_15=2 & w8=0 & w7=1 & w6=0 & w3_5=0 & w0_2d & POPP { build POPP; }
+
+# ---- condition code --------------------------------------------------------
+
+INSN:"IF CC" GD "=" GS is w9_15=3 & w8=1 & GD & GS { if (CC == 0) goto inst_next; GD = GS; }
+INSN:"IF !CC" GD "=" GS is w9_15=3 & w8=0 & GD & GS { if (CC != 0) goto inst_next; GD = GS; }
+
+# Data-register compares also set AZ, AN and AC0 from src - dst; pointer
+# compares only set CC.
+macro ccflags(a, b, lt) {
+  AZ = a == b;
+  AN = lt;
+  AC0 = b <= a;
+  AC0_COPY = b <= a;
+}
+
+CCD: dr3 is w10=0 & dr3 { export dr3; }
+CCD: w3_5s is w10=1 & w7_9<3 & w3_5s { export *[const]:4 w3_5s; }
+CCD: w3_5 is w10=1 & w7_9>=3 & w3_5 { export *[const]:4 w3_5; }
+CCP: pr3 is w10=0 & pr3 { export pr3; }
+CCP: w3_5s is w10=1 & w7_9<3 & w3_5s { export *[const]:4 w3_5s; }
+CCP: w3_5 is w10=1 & w7_9>=3 & w3_5 { export *[const]:4 w3_5; }
+
+INSN:"CC" "=" dr0 "==" CCD is w11_15=1 & w7_9=0 & w6=0 & dr0 & CCD { local b:4 = CCD; local lt:1 = dr0 s< b; ccflags(dr0, b, lt); CC = dr0 == b; }
+INSN:"CC" "=" dr0 "<" CCD is w11_15=1 & w7_9=1 & w6=0 & dr0 & CCD { local b:4 = CCD; local lt:1 = dr0 s< b; ccflags(dr0, b, lt); CC = lt; }
+INSN:"CC" "=" dr0 "<=" CCD is w11_15=1 & w7_9=2 & w6=0 & dr0 & CCD { local b:4 = CCD; local lt:1 = dr0 s< b; ccflags(dr0, b, lt); CC = dr0 s<= b; }
+INSN:"CC" "=" dr0 "<" CCD "(IU)" is w11_15=1 & w7_9=3 & w6=0 & dr0 & CCD { local b:4 = CCD; local lt:1 = dr0 < b; ccflags(dr0, b, lt); CC = lt; }
+INSN:"CC" "=" dr0 "<=" CCD "(IU)" is w11_15=1 & w7_9=4 & w6=0 & dr0 & CCD { local b:4 = CCD; local lt:1 = dr0 < b; ccflags(dr0, b, lt); CC = dr0 <= b; }
+INSN:"CC" "=" pr0 "==" CCP is w11_15=1 & w7_9=0 & w6=1 & pr0 & CCP { CC = pr0 == CCP; }
+INSN:"CC" "=" pr0 "<" CCP is w11_15=1 & w7_9=1 & w6=1 & pr0 & CCP { CC = pr0 s< CCP; }
+INSN:"CC" "=" pr0 "<=" CCP is w11_15=1 & w7_9=2 & w6=1 & pr0 & CCP { CC = pr0 s<= CCP; }
+INSN:"CC" "=" pr0 "<" CCP "(IU)" is w11_15=1 & w7_9=3 & w6=1 & pr0 & CCP { CC = pr0 < CCP; }
+INSN:"CC" "=" pr0 "<=" CCP "(IU)" is w11_15=1 & w7_9=4 & w6=1 & pr0 & CCP { CC = pr0 <= CCP; }
+
+macro acccmp(a0, a1) {
+  a0 = sext(A0:5);
+  a1 = sext(A1:5);
+  AZ = a0 == a1;
+  AN = a0 s< a1;
+  AC0 = A1:5 <= A0:5;
+  AC0_COPY = AC0;
+}
+INSN:"CC" "= A0 == A1" is op=0x0a80 { local a0:8; local a1:8; acccmp(a0, a1); CC = a0 == a1; }
+INSN:"CC" "= A0 < A1" is op=0x0b00 { local a0:8; local a1:8; acccmp(a0, a1); CC = a0 s< a1; }
+INSN:"CC" "= A0 <= A1" is op=0x0b80 { local a0:8; local a1:8; acccmp(a0, a1); CC = a0 s<= a1; }
+
+INSN:^dr0 "= CC" is w5_15=0x010 & w3_4=0 & dr0 { dr0 = zext(CC); }
+INSN:"CC" "=" dr0 is w5_15=0x010 & w3_4=1 & dr0 { CC = dr0 != 0; }
+INSN:"CC" "= !CC" is op=0x0218 { CC = CC == 0; }
+
+# CC2stat: CC op= ASTAT bit, or ASTAT bit op= CC. Undefined bits live in ASTAT_RSV.
+STB: cbit is cbit { export cbit; }
+INSN:"CC" "=" STB is w8_15=3 & w7=0 & w5_6=0 & STB { CC = STB; }
+INSN:"CC" "|=" STB is w8_15=3 & w7=0 & w5_6=1 & STB { CC = CC | STB; }
+INSN:"CC" "&=" STB is w8_15=3 & w7=0 & w5_6=2 & STB { CC = CC & STB; }
+INSN:"CC" "^=" STB is w8_15=3 & w7=0 & w5_6=3 & STB { CC = CC ^ STB; }
+INSN:^STB "= CC" is w8_15=3 & w7=1 & w5_6=0 & STB { STB = CC; }
+INSN:^STB "|= CC" is w8_15=3 & w7=1 & w5_6=1 & STB { STB = STB | CC; }
+INSN:^STB "&= CC" is w8_15=3 & w7=1 & w5_6=2 & STB { STB = STB & CC; }
+INSN:^STB "^= CC" is w8_15=3 & w7=1 & w5_6=3 & STB { STB = STB ^ CC; }
+
+RSVB: "ASTAT["^cbn^"]" is cbn & (w0_4=4 | w0_4=7 | (w0_4>=9 & w0_4<=11) | w0_4=14 | w0_4=15 | (w0_4>=20 & w0_4<=23) | w0_4>=26) { local b:1 = ((ASTAT_RSV >> cbn) & 1) != 0; export b; }
+macro setrsv(n, b) { ASTAT_RSV = (ASTAT_RSV & ~(1 << n)) | (zext(b) << n); }
+INSN:"CC" "=" RSVB is w8_15=3 & w7=0 & w5_6=0 & RSVB { CC = RSVB; }
+INSN:"CC" "|=" RSVB is w8_15=3 & w7=0 & w5_6=1 & RSVB { CC = CC | RSVB; }
+INSN:"CC" "&=" RSVB is w8_15=3 & w7=0 & w5_6=2 & RSVB { CC = CC & RSVB; }
+INSN:"CC" "^=" RSVB is w8_15=3 & w7=0 & w5_6=3 & RSVB { CC = CC ^ RSVB; }
+INSN:^RSVB "= CC" is w8_15=3 & w7=1 & w5_6=0 & RSVB & cbn { setrsv(cbn, CC); }
+INSN:^RSVB "|= CC" is w8_15=3 & w7=1 & w5_6=1 & RSVB & cbn { setrsv(cbn, RSVB | CC); }
+INSN:^RSVB "&= CC" is w8_15=3 & w7=1 & w5_6=2 & RSVB & cbn { setrsv(cbn, RSVB & CC); }
+INSN:^RSVB "^= CC" is w8_15=3 & w7=1 & w5_6=3 & RSVB & cbn { setrsv(cbn, RSVB ^ CC); }
+
+# ---- branches --------------------------------------------------------------
+
+INSN:"IF !CC JUMP" REL10 is w12_15=1 & w11=0 & w10=0 & REL10 { if (CC == 0) goto REL10; }
+INSN:"IF CC JUMP" REL10 is w12_15=1 & w11=1 & w10=0 & REL10 { if (CC != 0) goto REL10; }
+INSN:"IF !CC JUMP" REL10 "(BP)" is w12_15=1 & w11=0 & w10=1 & REL10 { if (CC == 0) goto REL10; }
+INSN:"IF CC JUMP" REL10 "(BP)" is w12_15=1 & w11=1 & w10=1 & REL10 { if (CC != 0) goto REL10; }
+INSN:"JUMP.S" REL12 is w12_15=2 & REL12 { goto REL12; }
+
+# ---- register moves and ALU (also valid multi-issue slots) -------------------
+
+S16: "NOP" is op=0x0000 { }
+
+S16: AD "=" AS is w12_15=3 & AD & AS & (w6_8<2 | w9_11<2 | (w6_8=4 & w0_2<4) | (w9_11=4 & w3_5<4 & w6_8<4)
+    | (w6_8=7 & w0_2=7 & (w9_11!=4 | w3_5>=4)) | (w9_11=7 & w3_5=7) | (w6_8<4 & w9_11<4) | (w6_8=7 & w0_2=0 & w9_11>=4))
+  { MV = AS; build AD; }
+
+# ALU2op
+S16: dr0 ">>>=" dr3 is w10_15=0x10 & w6_9=0 & dr0 & dr3 { local r:4 = dr0 s>> dr3; setnz(r); V = 0; V_COPY = 0; dr0 = r; }
+# The simulator leaves the flags alone when the count exceeds 31.
+S16: dr0 ">>=" dr3 is w10_15=0x10 & w6_9=1 & dr0 & dr3 {
+  local r:4 = dr0 >> dr3; local k:1 = dr3 <= 31;
+  AZ = (AZ & (k == 0)) | ((r == 0) & k); AN = (AN & (k == 0)) | ((r s< 0) & k);
+  V = V & (k == 0); V_COPY = V_COPY & (k == 0); dr0 = r;
+}
+S16: dr0 "<<=" dr3 is w10_15=0x10 & w6_9=2 & dr0 & dr3 { local r:4 = dr0 << dr3; setnz(r); V = 0; V_COPY = 0; dr0 = r; }
+S16: dr0 "*=" dr3 is w10_15=0x10 & w6_9=3 & dr0 & dr3 { dr0 = dr0 * dr3; }
+S16: dr0 "= (" dr0b "+" dr3 ") << 0x1" is w10_15=0x10 & w6_9=4 & dr0 & dr0b & dr3 {
+  local s:4 = dr0 + dr3; local r:4 = s << 1;
+  local o:1 = scarry(dr0, dr3) | (s s< 0) != ((s & 0x40000000) != 0);
+  setnz(r); setv(o); dr0 = r;
+}
+S16: dr0 "= (" dr0b "+" dr3 ") << 0x2" is w10_15=0x10 & w6_9=5 & dr0 & dr0b & dr3 {
+  local s:4 = dr0 + dr3; local r:4 = s << 2;
+  local o:1 = scarry(dr0, dr3) | (s s< 0) != ((s & 0x40000000) != 0) | ((s & 0x40000000) != 0) != ((s & 0x20000000) != 0);
+  setnz(r); setv(o); dr0 = r;
+}
+S16: "DIVQ" "("^dr0^","^dr3^")" is w10_15=0x10 & w6_9=8 & dr0 & dr3 {
+  local d:2 = dr3:2; local af:2 = dr0(2);
+  local r:2 = (af + d) * zext(AQ != 0) + (af - d) * zext(AQ == 0);
+  local qt:2 = (r ^ d) >> 15; local q:1 = qt:1;
+  AQ = q;
+  dr0 = (((dr0 << 1) | zext(q == 0)) & 0x1ffff) | (zext(r) << 17);
+}
+S16: "DIVS" "("^dr0^","^dr3^")" is w10_15=0x10 & w6_9=9 & dr0 & dr3 {
+  local d:2 = dr3:2; local r:2 = dr0(2);
+  local qt:2 = (r ^ d) >> 15; local q:1 = qt:1;
+  AQ = q;
+  dr0 = (((dr0 << 1) | zext(q)) & 0x1ffff) | (zext(r) << 17);
+}
+S16: dr0 "=" dl3 "(X)" is w10_15=0x10 & w6_9=10 & dr0 & dl3 { local r:4 = sext(dl3); setlogical(r); dr0 = r; }
+S16: dr0 "=" dl3 "(Z)" is w10_15=0x10 & w6_9=11 & dr0 & dl3 { local r:4 = zext(dl3); setlogical(r); dr0 = r; }
+S16: dr0 "=" db3 "(X)" is w10_15=0x10 & w6_9=12 & dr0 & db3 { local r:4 = sext(db3); setlogical(r); dr0 = r; }
+S16: dr0 "=" db3 "(Z)" is w10_15=0x10 & w6_9=13 & dr0 & db3 { local r:4 = zext(db3); setlogical(r); dr0 = r; }
+S16: dr0 "= -"^dr3 is w10_15=0x10 & w6_9=14 & dr0 & dr3 { local s:4 = dr3; local r:4 = -s; setnz(r); setv(s == 0x80000000); setac0(s == 0); dr0 = r; }
+S16: dr0 "=~" dr3 is w10_15=0x10 & w6_9=15 & dr0 & dr3 { local r:4 = ~dr3; setlogical(r); dr0 = r; }
+
+# PTR2op
+S16: pr0 "-=" pr3 is w9_15=0x22 & w6_8=0 & pr0 & pr3 { pr0 = pr0 - pr3; }
+S16: pr0 "=" pr3 "<< 0x2" is w9_15=0x22 & w6_8=1 & pr0 & pr3 { pr0 = pr3 << 2; }
+S16: pr0 "=" pr3 ">> 0x2" is w9_15=0x22 & w6_8=3 & pr0 & pr3 { pr0 = pr3 >> 2; }
+S16: pr0 "=" pr3 ">> 0x1" is w9_15=0x22 & w6_8=4 & pr0 & pr3 { pr0 = pr3 >> 1; }
+S16: pr0 "+=" pr3 "(BREV)" is w9_15=0x22 & w6_8=5 & pr0 & pr3 {
+  local a:4 = pr0; local b:4 = pr3; brev32(a); brev32(b); local r:4 = a + b; brev32(r); pr0 = r;
+}
+S16: pr0 "= (" pr0b "+" pr3 ") << 0x1" is w9_15=0x22 & w6_8=6 & pr0 & pr0b & pr3 { pr0 = (pr0 + pr3) << 1; }
+S16: pr0 "= (" pr0b "+" pr3 ") << 0x2" is w9_15=0x22 & w6_8=7 & pr0 & pr0b & pr3 { pr0 = (pr0 + pr3) << 2; }
+
+# COMP3op: dst = src0 op src1 (src0 in bits 0-2, src1 in bits 3-5)
+S16: dr6 "=" dr0 "+" dr3 is w12_15=5 & w9_11=0 & dr6 & dr0 & dr3 {
+  local a:4 = dr0; local b:4 = dr3; local r:4 = a + b; setnz(r); setv(scarry(a, b)); setac0(carry(a, b)); dr6 = r;
+}
+S16: dr6 "=" dr0 "-" dr3 is w12_15=5 & w9_11=1 & dr6 & dr0 & dr3 {
+  local a:4 = dr0; local b:4 = dr3; local r:4 = a - b; setnz(r); setv(sborrow(a, b)); setac0(b <= a); dr6 = r;
+}
+S16: dr6 "=" dr0 "&" dr3 is w12_15=5 & w9_11=2 & dr6 & dr0 & dr3 { local r:4 = dr0 & dr3; setlogical(r); dr6 = r; }
+S16: dr6 "=" dr0 "|" dr3 is w12_15=5 & w9_11=3 & dr6 & dr0 & dr3 { local r:4 = dr0 | dr3; setlogical(r); dr6 = r; }
+S16: dr6 "=" dr0 "^" dr3 is w12_15=5 & w9_11=4 & dr6 & dr0 & dr3 { local r:4 = dr0 ^ dr3; setlogical(r); dr6 = r; }
+S16: pr6 "=" pr0 "+" pr3 is w12_15=5 & w9_11=5 & pr6 & pr0 & pr3 { pr6 = pr0 + pr3; }
+S16: pr6 "=" pr0 "+ ("^pr3^" << 0x1)" is w12_15=5 & w9_11=6 & pr6 & pr0 & pr3 { pr6 = pr0 + (pr3 << 1); }
+S16: pr6 "=" pr0 "+ ("^pr3^" << 0x2)" is w12_15=5 & w9_11=7 & pr6 & pr0 & pr3 { pr6 = pr0 + (pr3 << 2); }
+S16: pr6 "=" pr0 "<< 0x1" is w12_15=5 & w9_11=5 & pr6 & pr0 & w3_5=0 & w0_2=0 { pr6 = pr0 + pr0; }
+S16: pr6 "=" pr0 "<< 0x1" is w12_15=5 & w9_11=5 & pr6 & pr0 & w3_5=1 & w0_2=1 { pr6 = pr0 + pr0; }
+S16: pr6 "=" pr0 "<< 0x1" is w12_15=5 & w9_11=5 & pr6 & pr0 & w3_5=2 & w0_2=2 { pr6 = pr0 + pr0; }
+S16: pr6 "=" pr0 "<< 0x1" is w12_15=5 & w9_11=5 & pr6 & pr0 & w3_5=3 & w0_2=3 { pr6 = pr0 + pr0; }
+S16: pr6 "=" pr0 "<< 0x1" is w12_15=5 & w9_11=5 & pr6 & pr0 & w3_5=4 & w0_2=4 { pr6 = pr0 + pr0; }
+S16: pr6 "=" pr0 "<< 0x1" is w12_15=5 & w9_11=5 & pr6 & pr0 & w3_5=5 & w0_2=5 { pr6 = pr0 + pr0; }
+S16: pr6 "=" pr0 "<< 0x1" is w12_15=5 & w9_11=5 & pr6 & pr0 & w3_5=6 & w0_2=6 { pr6 = pr0 + pr0; }
+S16: pr6 "=" pr0 "<< 0x1" is w12_15=5 & w9_11=5 & pr6 & pr0 & w3_5=7 & w0_2=7 { pr6 = pr0 + pr0; }
+
+# ---- loads and stores (also valid multi-issue slots) -------------------------
+
+# LDSTpmod: pointer post-modified by an index register; W[Pn ++ Pn] is W[Pn].
+S16: dr6 "= ["^pr0^" ++ "^pr3^"]" is w12_15=8 & w11=0 & w9_10=0 & dr6 & pr0 & pr3 & PV3 & PV0 & PMOD { local a:4 = PV0; build PMOD; dr6 = *:4 a; }
+S16: dl6 "= W["^pr0^" ++ "^pr3^"]" is w12_15=8 & w11=0 & w9_10=1 & dl6 & pr0 & pr3 & PV3 & PV0 & PMOD { local a:4 = PV0; build PMOD; dl6 = *:2 a; }
+S16: dh6 "= W["^pr0^" ++ "^pr3^"]" is w12_15=8 & w11=0 & w9_10=2 & dh6 & pr0 & pr3 & PV3 & PV0 & PMOD { local a:4 = PV0; build PMOD; dh6 = *:2 a; }
+S16: dr6 "= W["^pr0^" ++ "^pr3^"] (Z)" is w12_15=8 & w11=0 & w9_10=3 & dr6 & pr0 & pr3 & PV3 & PV0 & PMOD { local a:4 = PV0; build PMOD; dr6 = zext(*:2 a); }
+S16: dr6 "= W["^pr0^" ++ "^pr3^"] (X)" is w12_15=8 & w11=1 & w9_10=3 & dr6 & pr0 & pr3 & PV3 & PV0 & PMOD { local a:4 = PV0; build PMOD; dr6 = sext(*:2 a); }
+S16: "[" pr0^" ++ "^pr3^"] =" SV6 is w12_15=8 & w11=1 & w9_10=0 & SV6 & pr0 & pr3 & PV3 & PV0 & PMOD { *:4 PV0 = SV6; build PMOD; }
+S16: "W[" pr0^" ++ "^pr3^"] =" SVL6 is w12_15=8 & w11=1 & w9_10=1 & SVL6 & pr0 & pr3 & PV3 & PV0 & PMOD { *:2 PV0 = SVL6; build PMOD; }
+S16: "W[" pr0^" ++ "^pr3^"] =" SVH6 is w12_15=8 & w11=1 & w9_10=2 & SVH6 & pr0 & pr3 & PV3 & PV0 & PMOD { *:2 PV0 = SVH6; build PMOD; }
+S16: dl6 "= W["^pr0^"]" is w12_15=8 & w11=0 & w9_10=1 & dl6 & pr0 & PEQ & PV0 { dl6 = *:2 PV0; }
+S16: dh6 "= W["^pr0^"]" is w12_15=8 & w11=0 & w9_10=2 & dh6 & pr0 & PEQ & PV0 { dh6 = *:2 PV0; }
+S16: "W[" pr0^"] =" SVL6 is w12_15=8 & w11=1 & w9_10=1 & SVL6 & pr0 & PEQ & PV0 { *:2 PV0 = SVL6; }
+S16: "W[" pr0^"] =" SVH6 is w12_15=8 & w11=1 & w9_10=2 & SVH6 & pr0 & PEQ & PV0 { *:2 PV0 = SVH6; }
+
+# dagMODim / dagMODik (I-register modify)
+S16: ir0 "+=" mr2 is w8_15=0x9e & w7=0 & w5_6=3 & w4=0 & ir0 & mr2 & IV0 & MV2 { ir0 = IV0 + MV2; }
+S16: ir0 "-=" mr2 is w8_15=0x9e & w7=0 & w5_6=3 & w4=1 & ir0 & mr2 & IV0 & MV2 { ir0 = IV0 - MV2; }
+S16: ir0 "+=" mr2 "(BREV)" is w8_15=0x9e & w7=1 & w5_6=3 & w4=0 & ir0 & mr2 & IV0 & MV2 {
+  local a:4 = IV0; local b:4 = MV2; brev32(a); brev32(b); local r:4 = a + b; brev32(r); ir0 = r;
+}
+S16: ir0 "+= 0x2" is w4_15=0x9f6 & w2_3=0 & ir0 & IV0 { ir0 = IV0 + 2; }
+S16: ir0 "-= 0x2" is w4_15=0x9f6 & w2_3=1 & ir0 & IV0 { ir0 = IV0 - 2; }
+S16: ir0 "+= 0x4" is w4_15=0x9f6 & w2_3=2 & ir0 & IV0 { ir0 = IV0 + 4; }
+S16: ir0 "-= 0x4" is w4_15=0x9f6 & w2_3=3 & ir0 & IV0 { ir0 = IV0 - 4; }
+
+# dspLDST: loads/stores through I0-I3
+S16: dr0 "= ["^ir3^"++]" is w10_15=0x27 & w9=0 & w7_8=0 & w5_6=0 & dr0 & ir3 & IV3 { local a:4 = IV3; ir3 = IV3 + 4; dr0 = *:4 a; }
+S16: dl0 "= W["^ir3^"++]" is w10_15=0x27 & w9=0 & w7_8=0 & w5_6=1 & dl0 & ir3 & IV3 { local a:4 = IV3; ir3 = IV3 + 2; dl0 = *:2 a; }
+S16: dh0 "= W["^ir3^"++]" is w10_15=0x27 & w9=0 & w7_8=0 & w5_6=2 & dh0 & ir3 & IV3 { local a:4 = IV3; ir3 = IV3 + 2; dh0 = *:2 a; }
+S16: dr0 "= ["^ir3^"--]" is w10_15=0x27 & w9=0 & w7_8=1 & w5_6=0 & dr0 & ir3 & IV3 { local a:4 = IV3; ir3 = IV3 - 4; dr0 = *:4 a; }
+S16: dl0 "= W["^ir3^"--]" is w10_15=0x27 & w9=0 & w7_8=1 & w5_6=1 & dl0 & ir3 & IV3 { local a:4 = IV3; ir3 = IV3 - 2; dl0 = *:2 a; }
+S16: dh0 "= W["^ir3^"--]" is w10_15=0x27 & w9=0 & w7_8=1 & w5_6=2 & dh0 & ir3 & IV3 { local a:4 = IV3; ir3 = IV3 - 2; dh0 = *:2 a; }
+S16: dr0 "= ["^ir3^"]" is w10_15=0x27 & w9=0 & w7_8=2 & w5_6=0 & dr0 & ir3 & IV3 { dr0 = *:4 IV3; }
+S16: dl0 "= W["^ir3^"]" is w10_15=0x27 & w9=0 & w7_8=2 & w5_6=1 & dl0 & ir3 & IV3 { dl0 = *:2 IV3; }
+S16: dh0 "= W["^ir3^"]" is w10_15=0x27 & w9=0 & w7_8=2 & w5_6=2 & dh0 & ir3 & IV3 { dh0 = *:2 IV3; }
+S16: "[" ir3^"++] =" SV0 is w10_15=0x27 & w9=1 & w7_8=0 & w5_6=0 & SV0 & ir3 & IV3 { *:4 IV3 = SV0; ir3 = IV3 + 4; }
+S16: "W[" ir3^"++] =" SVL0 is w10_15=0x27 & w9=1 & w7_8=0 & w5_6=1 & SVL0 & ir3 & IV3 { *:2 IV3 = SVL0; ir3 = IV3 + 2; }
+S16: "W[" ir3^"++] =" SVH0 is w10_15=0x27 & w9=1 & w7_8=0 & w5_6=2 & SVH0 & ir3 & IV3 { *:2 IV3 = SVH0; ir3 = IV3 + 2; }
+S16: "[" ir3^"--] =" SV0 is w10_15=0x27 & w9=1 & w7_8=1 & w5_6=0 & SV0 & ir3 & IV3 { *:4 IV3 = SV0; ir3 = IV3 - 4; }
+S16: "W[" ir3^"--] =" SVL0 is w10_15=0x27 & w9=1 & w7_8=1 & w5_6=1 & SVL0 & ir3 & IV3 { *:2 IV3 = SVL0; ir3 = IV3 - 2; }
+S16: "W[" ir3^"--] =" SVH0 is w10_15=0x27 & w9=1 & w7_8=1 & w5_6=2 & SVH0 & ir3 & IV3 { *:2 IV3 = SVH0; ir3 = IV3 - 2; }
+S16: "[" ir3^"] =" SV0 is w10_15=0x27 & w9=1 & w7_8=2 & w5_6=0 & SV0 & ir3 & IV3 { *:4 IV3 = SV0; }
+S16: "W[" ir3^"] =" SVL0 is w10_15=0x27 & w9=1 & w7_8=2 & w5_6=1 & SVL0 & ir3 & IV3 { *:2 IV3 = SVL0; }
+S16: "W[" ir3^"] =" SVH0 is w10_15=0x27 & w9=1 & w7_8=2 & w5_6=2 & SVH0 & ir3 & IV3 { *:2 IV3 = SVH0; }
+S16: dr0 "= ["^ir3^" ++ "^mr5^"]" is w10_15=0x27 & w9=0 & w7_8=3 & dr0 & ir3 & mr5 & IV3 & MV5 { local a:4 = IV3; ir3 = IV3 + MV5; dr0 = *:4 a; }
+S16: "[" ir3^" ++ "^mr5^"] =" SV0 is w10_15=0x27 & w9=1 & w7_8=3 & SV0 & ir3 & mr5 & IV3 & MV5 { *:4 IV3 = SV0; ir3 = IV3 + MV5; }
+
+# LDST: pointer-register indirect, post-increment/decrement.
+S16: dr0 "= ["^pr3^"++]" is w12_15=9 & w10_11=0 & w9=0 & w7_8=0 & w6=0 & dr0 & pr3 & PV3 { local a:4 = PV3; pr3 = PV3 + 4; dr0 = *:4 a; }
+S16: pr0 "= ["^pr3^"++]" is w12_15=9 & w10_11=0 & w9=0 & w7_8=0 & w6=1 & pr0 & pr3 & PNE & PV3 { local a:4 = PV3; pr3 = PV3 + 4; pr0 = *:4 a; }
+S16: dr0 "= W["^pr3^"++] (Z)" is w12_15=9 & w10_11=1 & w9=0 & w7_8=0 & w6=0 & dr0 & pr3 & PV3 { local a:4 = PV3; pr3 = PV3 + 2; dr0 = zext(*:2 a); }
+S16: dr0 "= W["^pr3^"++] (X)" is w12_15=9 & w10_11=1 & w9=0 & w7_8=0 & w6=1 & dr0 & pr3 & PV3 { local a:4 = PV3; pr3 = PV3 + 2; dr0 = sext(*:2 a); }
+S16: dr0 "= B["^pr3^"++] (Z)" is w12_15=9 & w10_11=2 & w9=0 & w7_8=0 & w6=0 & dr0 & pr3 & PV3 { local a:4 = PV3; pr3 = PV3 + 1; dr0 = zext(*:1 a); }
+S16: dr0 "= B["^pr3^"++] (X)" is w12_15=9 & w10_11=2 & w9=0 & w7_8=0 & w6=1 & dr0 & pr3 & PV3 { local a:4 = PV3; pr3 = PV3 + 1; dr0 = sext(*:1 a); }
+S16: dr0 "= ["^pr3^"--]" is w12_15=9 & w10_11=0 & w9=0 & w7_8=1 & w6=0 & dr0 & pr3 & PV3 { local a:4 = PV3; pr3 = PV3 - 4; dr0 = *:4 a; }
+S16: pr0 "= ["^pr3^"--]" is w12_15=9 & w10_11=0 & w9=0 & w7_8=1 & w6=1 & pr0 & pr3 & PNE & PV3 { local a:4 = PV3; pr3 = PV3 - 4; pr0 = *:4 a; }
+S16: dr0 "= W["^pr3^"--] (Z)" is w12_15=9 & w10_11=1 & w9=0 & w7_8=1 & w6=0 & dr0 & pr3 & PV3 { local a:4 = PV3; pr3 = PV3 - 2; dr0 = zext(*:2 a); }
+S16: dr0 "= W["^pr3^"--] (X)" is w12_15=9 & w10_11=1 & w9=0 & w7_8=1 & w6=1 & dr0 & pr3 & PV3 { local a:4 = PV3; pr3 = PV3 - 2; dr0 = sext(*:2 a); }
+S16: dr0 "= B["^pr3^"--] (Z)" is w12_15=9 & w10_11=2 & w9=0 & w7_8=1 & w6=0 & dr0 & pr3 & PV3 { local a:4 = PV3; pr3 = PV3 - 1; dr0 = zext(*:1 a); }
+S16: dr0 "= B["^pr3^"--] (X)" is w12_15=9 & w10_11=2 & w9=0 & w7_8=1 & w6=1 & dr0 & pr3 & PV3 { local a:4 = PV3; pr3 = PV3 - 1; dr0 = sext(*:1 a); }
+S16: dr0 "= ["^pr3^"]" is w12_15=9 & w10_11=0 & w9=0 & w7_8=2 & w6=0 & dr0 & pr3 & PV3 { dr0 = *:4 PV3; }
+S16: pr0 "= ["^pr3^"]" is w12_15=9 & w10_11=0 & w9=0 & w7_8=2 & w6=1 & pr0 & pr3 & PV3 { pr0 = *:4 PV3; }
+S16: dr0 "= W["^pr3^"] (Z)" is w12_15=9 & w10_11=1 & w9=0 & w7_8=2 & w6=0 & dr0 & pr3 & PV3 { dr0 = zext(*:2 PV3); }
+S16: dr0 "= W["^pr3^"] (X)" is w12_15=9 & w10_11=1 & w9=0 & w7_8=2 & w6=1 & dr0 & pr3 & PV3 { dr0 = sext(*:2 PV3); }
+S16: dr0 "= B["^pr3^"] (Z)" is w12_15=9 & w10_11=2 & w9=0 & w7_8=2 & w6=0 & dr0 & pr3 & PV3 { dr0 = zext(*:1 PV3); }
+S16: dr0 "= B["^pr3^"] (X)" is w12_15=9 & w10_11=2 & w9=0 & w7_8=2 & w6=1 & dr0 & pr3 & PV3 { dr0 = sext(*:1 PV3); }
+S16: "[" pr3^"++] =" SV0 is w12_15=9 & w10_11=0 & w9=1 & w7_8=0 & w6=0 & SV0 & pr3 & PV3 { *:4 PV3 = SV0; pr3 = PV3 + 4; }
+S16: "[" pr3^"++] =" pr0 is w12_15=9 & w10_11=0 & w9=1 & w7_8=0 & w6=1 & pr0 & pr3 & PV3 & PV0 { *:4 PV3 = PV0; pr3 = PV3 + 4; }
+S16: "W[" pr3^"++] =" SV0 is w12_15=9 & w10_11=1 & w9=1 & w7_8=0 & w6=0 & SV0 & pr3 & PV3 { *:2 PV3 = SV0:2; pr3 = PV3 + 2; }
+S16: "B[" pr3^"++] =" SV0 is w12_15=9 & w10_11=2 & w9=1 & w7_8=0 & w6=0 & SV0 & pr3 & PV3 { *:1 PV3 = SV0:1; pr3 = PV3 + 1; }
+S16: "[" pr3^"--] =" SV0 is w12_15=9 & w10_11=0 & w9=1 & w7_8=1 & w6=0 & SV0 & pr3 & PV3 { *:4 PV3 = SV0; pr3 = PV3 - 4; }
+S16: "[" pr3^"--] =" pr0 is w12_15=9 & w10_11=0 & w9=1 & w7_8=1 & w6=1 & pr0 & pr3 & PV3 & PV0 { *:4 PV3 = PV0; pr3 = PV3 - 4; }
+S16: "W[" pr3^"--] =" SV0 is w12_15=9 & w10_11=1 & w9=1 & w7_8=1 & w6=0 & SV0 & pr3 & PV3 { *:2 PV3 = SV0:2; pr3 = PV3 - 2; }
+S16: "B[" pr3^"--] =" SV0 is w12_15=9 & w10_11=2 & w9=1 & w7_8=1 & w6=0 & SV0 & pr3 & PV3 { *:1 PV3 = SV0:1; pr3 = PV3 - 1; }
+S16: "[" pr3^"] =" SV0 is w12_15=9 & w10_11=0 & w9=1 & w7_8=2 & w6=0 & SV0 & pr3 & PV3 { *:4 PV3 = SV0; }
+S16: "[" pr3^"] =" pr0 is w12_15=9 & w10_11=0 & w9=1 & w7_8=2 & w6=1 & pr0 & pr3 & PV0 & PV3 { *:4 PV3 = PV0; }
+S16: "W[" pr3^"] =" SV0 is w12_15=9 & w10_11=1 & w9=1 & w7_8=2 & w6=0 & SV0 & pr3 & PV3 { *:2 PV3 = SV0:2; }
+S16: "B[" pr3^"] =" SV0 is w12_15=9 & w10_11=2 & w9=1 & w7_8=2 & w6=0 & SV0 & pr3 & PV3 { *:1 PV3 = SV0:1; }
+
+# LDSTiiFP: FP-relative, negative word offsets
+S16: dp0 "= [FP"^FPOFF^"]" is w10_15=0x2e & w9=0 & dp0 & FPOFF & FPV { local a:4 = FPV + FPOFF; dp0 = *:4 a; }
+S16: "[FP" FPOFF^"] =" SVDP0 is w10_15=0x2e & w9=1 & SVDP0 & FPOFF & FPV { local a:4 = FPV + FPOFF; *:4 a = SVDP0; }
+
+# LDSTii: pointer plus scaled 4-bit offset
+S16: dr0 "= ["^pr3^" + "^U4S4^"]" is w13_15=5 & w12=0 & w10_11=0 & dr0 & pr3 & U4S4 & PV3 { local a:4 = PV3 + U4S4; dr0 = *:4 a; }
+S16: dr0 "= W["^pr3^" + "^U4S2^"] (Z)" is w13_15=5 & w12=0 & w10_11=1 & dr0 & pr3 & U4S2 & PV3 { local a:4 = PV3 + U4S2; dr0 = zext(*:2 a); }
+S16: dr0 "= W["^pr3^" + "^U4S2^"] (X)" is w13_15=5 & w12=0 & w10_11=2 & dr0 & pr3 & U4S2 & PV3 { local a:4 = PV3 + U4S2; dr0 = sext(*:2 a); }
+S16: pr0 "= ["^pr3^" + "^U4S4^"]" is w13_15=5 & w12=0 & w10_11=3 & pr0 & pr3 & U4S4 & PV3 { local a:4 = PV3 + U4S4; pr0 = *:4 a; }
+S16: "[" pr3^" + "^U4S4^"] =" SV0 is w13_15=5 & w12=1 & w10_11=0 & SV0 & pr3 & U4S4 & PV3 { local a:4 = PV3 + U4S4; *:4 a = SV0; }
+S16: "W[" pr3^" + "^U4S2^"] =" SV0 is w13_15=5 & w12=1 & w10_11=1 & SV0 & pr3 & U4S2 & PV3 { local a:4 = PV3 + U4S2; *:2 a = SV0:2; }
+S16: "[" pr3^" + "^U4S4^"] =" pr0 is w13_15=5 & w12=1 & w10_11=3 & pr0 & pr3 & U4S4 & PV3 & PV0 { local a:4 = PV3 + U4S4; *:4 a = PV0; }
+
+INSN:^S16 is S16 { build S16; }
+
+# ---- 16-bit immediate / bit / shift operations -------------------------------
+
+# LOGI2op
+INSN:"CC" "= !BITTST ("^dr0^","^w3_7^")" is w11_15=9 & w8_10=0 & dr0 & w3_7 { CC = ((dr0 >> w3_7) & 1) == 0; }
+INSN:"CC" "= BITTST ("^dr0^","^w3_7^")" is w11_15=9 & w8_10=1 & dr0 & w3_7 { CC = ((dr0 >> w3_7) & 1) != 0; }
+INSN:"BITSET" "("^dr0^","^w3_7^")" is w11_15=9 & w8_10=2 & dr0 & w3_7 { local r:4 = dr0 | (1 << w3_7); setlogical(r); dr0 = r; }
+INSN:"BITTGL" "("^dr0^","^w3_7^")" is w11_15=9 & w8_10=3 & dr0 & w3_7 { local r:4 = dr0 ^ (1 << w3_7); setlogical(r); dr0 = r; }
+INSN:"BITCLR" "("^dr0^","^w3_7^")" is w11_15=9 & w8_10=4 & dr0 & w3_7 { local r:4 = dr0 & ~(1 << w3_7); setlogical(r); dr0 = r; }
+INSN:^dr0 ">>>=" w3_7 is w11_15=9 & w8_10=5 & dr0 & w3_7 { local r:4 = dr0 s>> w3_7; setnz(r); V = 0; V_COPY = 0; dr0 = r; }
+INSN:^dr0 ">>=" w3_7 is w11_15=9 & w8_10=6 & dr0 & w3_7 { local r:4 = dr0 >> w3_7; setnz(r); V = 0; V_COPY = 0; dr0 = r; }
+INSN:^dr0 "<<=" w3_7 is w11_15=9 & w8_10=7 & dr0 & w3_7 { local r:4 = dr0 << w3_7; setnz(r); V = 0; V_COPY = 0; dr0 = r; }
+
+# COMPI2opD / COMPI2opP: 7-bit signed immediate load and add
+INSN:^dr0 "=" w3_9s "(X)" is w11_15=0xc & w10=0 & dr0 & w3_9s { dr0 = w3_9s; }
+INSN:^dr0 "+=" w3_9s is w11_15=0xc & w10=1 & dr0 & w3_9s {
+  local a:4 = dr0; local b:4 = w3_9s; local r:4 = a + b; setnz(r); setv(scarry(a, b)); setac0(carry(a, b)); dr0 = r;
+}
+INSN:^pr0 "=" w3_9s "(X)" is w11_15=0xd & w10=0 & pr0 & w3_9s { pr0 = w3_9s; }
+INSN:^pr0 "+=" w3_9s is w11_15=0xd & w10=1 & pr0 & w3_9s { pr0 = pr0 + w3_9s; }
+
+# ---- simulator pseudo instructions (pseudoDEBUG, pseudoOChar) ----------------
+
+DBGR: psr is psr { }
+DBGR: "SP" is w0_5=14 { }
+DBGR: "A0.X" is w0_5=32 { }
+DBGR: "A1.X" is w0_5=34 { }
+DBGR: "ASTAT" is w0_5=38 { }
+INSN:"DBG A0" is w8_15=0xf8 & w6_7=3 & w0_2=0 { dbg(); }
+INSN:"DBG A1" is w8_15=0xf8 & w6_7=3 & w0_2=1 { dbg(); }
+INSN:"ABORT" is w8_15=0xf8 & w6_7=3 & w0_2=3 { abort(); }
+INSN:"HLT" is w8_15=0xf8 & w6_7=3 & w0_2=4 { halt(); }
+INSN:"DBGHALT" is w8_15=0xf8 & w6_7=3 & w0_2=5 { halt(); }
+INSN:"DBGCMPLX" "("^dr3^")" is w8_15=0xf8 & w6_7=3 & w0_2=6 & dr3 { dbg(dr3); }
+INSN:"DBG" is w8_15=0xf8 & w6_7=3 & w0_2=7 { dbg(); }
+INSN:"OUTC" dr0 is w8_15=0xf8 & w6_7=2 & w3_5=0 & dr0 { outc(dr0); }
+INSN:"DBG" DBGR is w8_15=0xf8 & w6_7=0 & DBGR { dbg(); }
+INSN:"PRNT" DBGR is w8_15=0xf8 & w6_7=1 & DBGR { dbg(); }
+INSN:"OUTC" w0_7 is w8_15=0xf9 & w0_7 { outc(w0_7:1); }

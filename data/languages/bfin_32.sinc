@@ -1,0 +1,78 @@
+# 32-bit non-DSP instructions: loop setup, immediate loads, long jumps/calls,
+# 16-bit-offset loads/stores, linkage, simulator assertion.
+
+# ---- hardware loops ----------------------------------------------------------
+# Start and end offsets are unsigned (pcrel5m2, lppcrel11m2; GNU objdump shows
+# them sign-extended). LSETUP sets LT/LB (and LC) and marks the loop-bottom
+# instruction in the context so that bfin_loop.sinc adds the loop-back branch.
+
+LSTART: dest is w0_3 [ dest = inst_start + w0_3 * 2; ] { export *[const]:4 dest; }
+LEND: dest is x0_9 [ dest = inst_start + x0_9 * 2; ] { export *[const]:4 dest; }
+LENDA: dest is x0_9 [ dest = inst_start + x0_9 * 2; ] { export *:4 dest; }
+MARK0: is w4=0 & w0_3; LENDA [ lbot0 = 1; ltop0 = inst_start + w0_3 * 2; globalset(LENDA, lbot0); globalset(LENDA, ltop0); ] { }
+MARK1: is w4=1 & w0_3; LENDA [ lbot1 = 1; ltop1 = inst_start + w0_3 * 2; globalset(LENDA, lbot1); globalset(LENDA, ltop1); ] { }
+
+INSN:"LSETUP" "("^LSTART^","^LEND^") LC0" is (w7_15=0x1c1 & w5_6=0 & w4=0 & LSTART; x10_11=0 & x15=0 & LEND) & MARK0 { LT0 = LSTART; LB0 = LEND; }
+INSN:"LSETUP" "("^LSTART^","^LEND^") LC1" is (w7_15=0x1c1 & w5_6=0 & w4=1 & LSTART; x10_11=0 & x15=0 & LEND) & MARK1 { LT1 = LSTART; LB1 = LEND; }
+INSN:"LSETUP" "("^LSTART^","^LEND^") LC0 =" xpr12 is (w7_15=0x1c1 & w5_6=1 & w4=0 & LSTART; x10_11=0 & x15=0 & LEND & xpr12) & MARK0 { LT0 = LSTART; LB0 = LEND; LC0 = xpr12; }
+INSN:"LSETUP" "("^LSTART^","^LEND^") LC1 =" xpr12 is (w7_15=0x1c1 & w5_6=1 & w4=1 & LSTART; x10_11=0 & x15=0 & LEND & xpr12) & MARK1 { LT1 = LSTART; LB1 = LEND; LC1 = xpr12; }
+INSN:"LSETUP" "("^LSTART^","^LEND^") LC0 =" xpr12 ">> 0x1" is (w7_15=0x1c1 & w5_6=3 & w4=0 & LSTART; x10_11=0 & x15=0 & LEND & xpr12) & MARK0 { LT0 = LSTART; LB0 = LEND; LC0 = xpr12 >> 1; }
+INSN:"LSETUP" "("^LSTART^","^LEND^") LC1 =" xpr12 ">> 0x1" is (w7_15=0x1c1 & w5_6=3 & w4=1 & LSTART; x10_11=0 & x15=0 & LEND & xpr12) & MARK1 { LT1 = LSTART; LB1 = LEND; LC1 = xpr12 >> 1; }
+
+# ---- LDIMMhalf ---------------------------------------------------------------
+
+INSN:^rgl0 "=" x0_15 is w8_15=0xe1 & w7=0 & w6=0 & w5=0 & rgl0; x0_15 { rgl0 = x0_15; }
+INSN:^rgh0 "=" x0_15 is w8_15=0xe1 & w7=0 & w6=1 & w5=0 & rgh0; x0_15 { rgh0 = x0_15; }
+INSN:^rg0 "=" x0_15s "(X)" is w8_15=0xe1 & w7=0 & w6=0 & w5=1 & rg0; x0_15s { rg0 = x0_15s; }
+INSN:^rg0 "=" x0_15 "(Z)" is w8_15=0xe1 & w7=1 & w6=0 & w5=0 & rg0; x0_15 { rg0 = x0_15; }
+
+# ---- CALLa ---------------------------------------------------------------------
+
+REL24: dest is w0_7s; x0_15 [ dest = inst_start + ((w0_7s << 16) | x0_15) * 2; ] { export *:4 dest; }
+INSN:"JUMP.L" REL24 is (w9_15=0x71 & w8=0)... & REL24 { goto REL24; }
+INSN:"CALL" REL24 is (w9_15=0x71 & w8=1)... & REL24 { RETS = inst_next; call REL24; }
+
+# ---- LDSTidxI: pointer plus signed 16-bit offset (scaled by access size) -------
+
+IDX4: val is x0_15s [ val = x0_15s * 4; ] { export *[const]:4 val; }
+IDX2: val is x0_15s [ val = x0_15s * 2; ] { export *[const]:4 val; }
+IDX1: x0_15s is x0_15s { export *[const]:4 x0_15s; }
+
+INSN:^dr0 "= ["^pr3^" + "^IDX4^"]" is w10_15=0x39 & w9=0 & w8=0 & w6_7=0 & dr0 & pr3; IDX4 { local a:4 = pr3 + IDX4; dr0 = *:4 a; }
+INSN:^pr0 "= ["^pr3^" + "^IDX4^"]" is w10_15=0x39 & w9=0 & w8=1 & w6_7=0 & pr0 & pr3; IDX4 { local a:4 = pr3 + IDX4; pr0 = *:4 a; }
+INSN:^dr0 "= W["^pr3^" + "^IDX2^"] (Z)" is w10_15=0x39 & w9=0 & w8=0 & w6_7=1 & dr0 & pr3; IDX2 { local a:4 = pr3 + IDX2; dr0 = zext(*:2 a); }
+INSN:^dr0 "= W["^pr3^" + "^IDX2^"] (X)" is w10_15=0x39 & w9=0 & w8=1 & w6_7=1 & dr0 & pr3; IDX2 { local a:4 = pr3 + IDX2; dr0 = sext(*:2 a); }
+INSN:^dr0 "= B["^pr3^" + "^IDX1^"] (Z)" is w10_15=0x39 & w9=0 & w8=0 & w6_7=2 & dr0 & pr3; IDX1 { local a:4 = pr3 + IDX1; dr0 = zext(*:1 a); }
+INSN:^dr0 "= B["^pr3^" + "^IDX1^"] (X)" is w10_15=0x39 & w9=0 & w8=1 & w6_7=2 & dr0 & pr3; IDX1 { local a:4 = pr3 + IDX1; dr0 = sext(*:1 a); }
+INSN:"[" pr3^" + "^IDX4^"] =" dr0 is w10_15=0x39 & w9=1 & w8=0 & w6_7=0 & dr0 & pr3; IDX4 { local a:4 = pr3 + IDX4; *:4 a = dr0; }
+INSN:"[" pr3^" + "^IDX4^"] =" pr0 is w10_15=0x39 & w9=1 & w8=1 & w6_7=0 & pr0 & pr3; IDX4 { local a:4 = pr3 + IDX4; *:4 a = pr0; }
+INSN:"W[" pr3^" + "^IDX2^"] =" dr0 is w10_15=0x39 & w9=1 & w8=0 & w6_7=1 & dr0 & pr3; IDX2 { local a:4 = pr3 + IDX2; *:2 a = dr0:2; }
+INSN:"B[" pr3^" + "^IDX1^"] =" dr0 is w10_15=0x39 & w9=1 & w8=0 & w6_7=2 & dr0 & pr3; IDX1 { local a:4 = pr3 + IDX1; *:1 a = dr0:1; }
+
+# ---- linkage -----------------------------------------------------------------
+# LINK pushes RETS then FP, points FP at the saved FP and reserves the frame.
+
+FRAME: val is x0_15 [ val = x0_15 * 4; ] { export *[const]:4 val; }
+INSN:"LINK" FRAME is op=0xe800; FRAME {
+  SP = SP - 4; *:4 SP = RETS;
+  SP = SP - 4; *:4 SP = FP;
+  FP = SP;
+  SP = SP - FRAME;
+}
+INSN:"UNLINK" is op=0xe801; x0_15 {
+  SP = FP;
+  FP = *:4 SP; SP = SP + 4;
+  RETS = *:4 SP; SP = SP + 4;
+}
+
+# ---- simulator assertion (pseudodbg_assert) --------------------------------------
+
+DBGAR: psr is psr { }
+DBGAR: "SP" is w0_5=14 { }
+DBGAR: "A0.X" is w0_5=32 { }
+DBGAR: "A1.X" is w0_5=34 { }
+DBGAR: "ASTAT" is w0_5=38 { }
+INSN:"DBGA" "("^rgl0^","^x0_15^")" is w8_15=0xf0 & w6_7=0 & rgl0; x0_15 { dbg_assert(); }
+INSN:"DBGA" "("^rgh0^","^x0_15^")" is w8_15=0xf0 & w6_7=1 & rgh0; x0_15 { dbg_assert(); }
+INSN:"DBGAL" "("^DBGAR^","^x0_15^")" is w8_15=0xf0 & w6_7=2 & DBGAR; x0_15 { dbg_assert(); }
+INSN:"DBGAH" "("^DBGAR^","^x0_15^")" is w8_15=0xf0 & w6_7=3 & DBGAR; x0_15 { dbg_assert(); }

@@ -1,0 +1,15 @@
+# Multi-issue packets: a DSP32 operation (or MNOP) plus two 16-bit slots, eight
+# bytes in all. The DSP operation runs first; the slots read the registers as
+# they were before the packet (the *_P snapshot; see SV0, PV3 and friends).
+
+S16B: S16 is S16 { build S16; }
+
+INSN:^DSP is (w11=0)... & DSP { build DSP; }
+INSN:^DSP "||" S16 "||" S16B is ((w11=1)... & DSP); S16; S16B [ par=1; ] {
+  R0_P = R0; R1_P = R1; R2_P = R2; R3_P = R3; R4_P = R4; R5_P = R5; R6_P = R6; R7_P = R7;
+  P0_P = P0; P1_P = P1; P2_P = P2; P3_P = P3; P4_P = P4; P5_P = P5; SP_P = SP; FP_P = FP;
+  I0_P = I0; I1_P = I1; I2_P = I2; I3_P = I3; M0_P = M0; M1_P = M1; M2_P = M2; M3_P = M3;
+  build DSP;
+  build S16;
+  build S16B;
+}

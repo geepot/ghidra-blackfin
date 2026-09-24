@@ -1,0 +1,37 @@
+# Zero-overhead hardware loops. The instruction LSETUP marked as a loop bottom
+# runs, then: if LCn is non-zero it is decremented, and while it stays non-zero
+# control returns to the loop top. LC0 (the inner loop) is checked first.
+
+# Every instruction is an INSN; the root adds the loop-back where LSETUP marked
+# a loop bottom.
+:^INSN is lbot0=0 & lbot1=0 & INSN { build INSN; }
+
+LOOPTOP0: ltop0 is ltop0 { export *:4 ltop0; }
+LOOPTOP1: ltop1 is ltop1 { export *:4 ltop1; }
+
+:^INSN is lbot0=1 & lbot1=0 & LOOPTOP0 & INSN {
+  build INSN;
+  if (LC0 == 0) goto inst_next;
+  LC0 = LC0 - 1;
+  if (LC0 == 0) goto inst_next;
+  goto LOOPTOP0;
+}
+:^INSN is lbot0=0 & lbot1=1 & LOOPTOP1 & INSN {
+  build INSN;
+  if (LC1 == 0) goto inst_next;
+  LC1 = LC1 - 1;
+  if (LC1 == 0) goto inst_next;
+  goto LOOPTOP1;
+}
+:^INSN is lbot0=1 & lbot1=1 & LOOPTOP0 & LOOPTOP1 & INSN {
+  build INSN;
+  if (LC0 == 0) goto <outer>;
+  LC0 = LC0 - 1;
+  if (LC0 == 0) goto <outer>;
+  goto LOOPTOP0;
+<outer>
+  if (LC1 == 0) goto inst_next;
+  LC1 = LC1 - 1;
+  if (LC1 == 0) goto inst_next;
+  goto LOOPTOP1;
+}

@@ -1,0 +1,584 @@
+# dsp32alu: first word aopcde=(0,4) HL=5; second word aop=(14,15) s=13 x=12
+# dst0=(9,11) dst1=(6,8) src0=(3,5) src1=(0,2). Constructors follow the GNU
+# disassembler's decode conditions (bits it ignores are ignored here too);
+# semantics follow the GNU simulator.
+
+# ---- operands --------------------------------------------------------------
+
+DSTH: xdl9 is w5=0; xdl9 { export xdl9; }
+DSTH: xdh9 is w5=1; xdh9 { export xdh9; }
+S0H: xdl3 is x15=0 & xdl3 { export xdl3; }
+S0H: xdh3 is x15=1 & xdh3 { export xdh3; }
+S1H: xdl0 is x14=0 & xdl0 { export xdl0; }
+S1H: xdh0 is x14=1 & xdh0 { export xdh0; }
+
+AMOD0: is x13=0 & x12=0 { }
+AMOD0: "(S)" is x13=1 & x12=0 { }
+AMOD0: "(CO)" is x13=0 & x12=1 { }
+AMOD0: "(SCO)" is x13=1 & x12=1 { }
+AMOD1: "(NS)" is x13=0 & x12=0 { }
+AMOD1: "(S)" is x13=1 & x12=0 { }
+AMOD1: is x12=1 { }
+AMOD02: AMOD0 is x14_15=0 & AMOD0 { }
+AMOD02: is x14_15=1 { }
+AMOD02: "(ASR)" is x14_15=2 & x13=0 & x12=0 { }
+AMOD02: "(S, ASR)" is x14_15=2 & x13=1 & x12=0 { }
+AMOD02: "(CO, ASR)" is x14_15=2 & x13=0 & x12=1 { }
+AMOD02: "(SCO, ASR)" is x14_15=2 & x13=1 & x12=1 { }
+AMOD02: "(ASL)" is x14_15=3 & x13=0 & x12=0 { }
+AMOD02: "(S, ASL)" is x14_15=3 & x13=1 & x12=0 { }
+AMOD02: "(CO, ASL)" is x14_15=3 & x13=0 & x12=1 { }
+AMOD02: "(SCO, ASL)" is x14_15=3 & x13=1 & x12=1 { }
+
+# Register pairs R(n+1):n of the byte-video operations, as one 64-bit value.
+PAIRA: "R1:0" is x3_5=0 { local c:8 = (zext(R1) << 32) | zext(R0); export c; }
+PAIRA: "R2:1" is x3_5=1 { local c:8 = (zext(R2) << 32) | zext(R1); export c; }
+PAIRA: "R3:2" is x3_5=2 { local c:8 = (zext(R3) << 32) | zext(R2); export c; }
+PAIRA: "R4:3" is x3_5=3 { local c:8 = (zext(R4) << 32) | zext(R3); export c; }
+PAIRA: "R5:4" is x3_5=4 { local c:8 = (zext(R5) << 32) | zext(R4); export c; }
+PAIRA: "R6:5" is x3_5=5 { local c:8 = (zext(R6) << 32) | zext(R5); export c; }
+PAIRA: "R7:6" is x3_5=6 { local c:8 = (zext(R7) << 32) | zext(R6); export c; }
+PAIRA: "R0:7" is x3_5=7 { local c:8 = (zext(R0) << 32) | zext(R7); export c; }
+PAIRB: "R1:0" is x0_2=0 { local c:8 = (zext(R1) << 32) | zext(R0); export c; }
+PAIRB: "R2:1" is x0_2=1 { local c:8 = (zext(R2) << 32) | zext(R1); export c; }
+PAIRB: "R3:2" is x0_2=2 { local c:8 = (zext(R3) << 32) | zext(R2); export c; }
+PAIRB: "R4:3" is x0_2=3 { local c:8 = (zext(R4) << 32) | zext(R3); export c; }
+PAIRB: "R5:4" is x0_2=4 { local c:8 = (zext(R5) << 32) | zext(R4); export c; }
+PAIRB: "R6:5" is x0_2=5 { local c:8 = (zext(R6) << 32) | zext(R5); export c; }
+PAIRB: "R7:6" is x0_2=6 { local c:8 = (zext(R7) << 32) | zext(R6); export c; }
+PAIRB: "R0:7" is x0_2=7 { local c:8 = (zext(R0) << 32) | zext(R7); export c; }
+RDIR: is x13=0 { }
+RDIR: "(R)" is x13=1 { }
+
+# ---- helpers ---------------------------------------------------------------
+
+# 16-bit add/subtract with optional saturation s, carry c and overflow o.
+macro add16(a, b, s, r, c, o) {
+  local sum:2 = a + b;
+  local ov:1 = scarry(a, b);
+  local sv:1 = ov & (s != 0:1);
+  r = sum * zext(sv == 0) + (0x7fff + zext(a s< 0)) * zext(sv);
+  c = carry(a, b);
+  o = ov;
+}
+macro sub16(a, b, s, r, c, o) {
+  local dif:2 = a - b;
+  local ov:1 = sborrow(a, b);
+  local sv:1 = ov & (s != 0:1);
+  r = dif * zext(sv == 0) + (0x7fff + zext(a s< 0)) * zext(sv);
+  c = b <= a;
+  o = ov;
+}
+# (ASR) halves: the simulator's formulas, including its overflow and the
+# saturation of the (S) forms. (ASL) doubles, saturating when s.
+macro add16asr(a0, b0, s, r, o) {
+  local a:2 = a0; local b:2 = b0;
+  local ua:4 = zext(a); local ub:4 = zext(b);
+  local v:4 = (ua >> 1) + (ua & 0x8000) + (ub >> 1) + (ub & 0x8000) + (((ua & 1) + (ub & 1)) >> 1);
+  v = v | -(v & 0x8000);
+  local n:1 = (v & 0x8000) != 0;
+  o = (((a s< 0) != n) & ((b s< 0) != n)) | (v s> 0xffff);
+  local lo:1 = v s< -0x8000; local hi:1 = v s> 0x7fff; local sv:1 = (s != 0:1) & (lo | hi);
+  local tv:2 = v:2;
+  r = tv * zext(sv == 0) + zext(sv & lo) * 0x8000 + zext(sv & hi) * 0x7fff;
+}
+macro sub16asr(a0, b0, s, r, o) {
+  local a:2 = a0; local b:2 = b0;
+  local ua:4 = zext(a); local ub:4 = zext(b);
+  local fs:1 = a s< 0; local fo:1 = b s< 0;
+  local d:2 = a - b; local fn0:1 = d s< 0;
+  local vs:4 = ((ua >> 1) + (ua & 0x8000)) - ((ub >> 1) + (ub & 0x8000)) + ((ua & 1) - (ub & 1));
+  local hib:1 = ((fs == 0) & (fo == 0) & fn0) | (fs & (fo == 0) & (fn0 == 0)) | (fs & fo & fn0) | (fs & (fo == 0) & fn0);
+  local vn:4 = (zext(d) >> 1) | zext(hib) * 0x8000;
+  local v:4 = zext(s != 0:1) * vs + zext(s == 0:1) * vn;
+  v = v | -(v & 0x8000);
+  local n:1 = (v & 0x8000) != 0;
+  o = (fs != fo) & (n != fs);
+  local lo:1 = v s< -0x8000; local hi:1 = v s> 0x7fff; local sv:1 = (s != 0:1) & (lo | hi);
+  local tv:2 = v:2;
+  r = tv * zext(sv == 0) + zext(sv & lo) * 0x8000 + zext(sv & hi) * 0x7fff;
+}
+macro add16asl(a, b, s, r, o) {
+  local aa:2 = a; local bb:2 = b;
+  local t:4 = (sext(aa) + sext(bb)) << 1;
+  local n:1 = (t & 0x8000) != 0;
+  o = (((aa s< 0) != n) & ((bb s< 0) != n)) | (t s> 0xffff);
+  local lo:1 = t s< -0x8000; local hi:1 = t s> 0x7fff; local sv:1 = (s != 0:1) & (lo | hi);
+  local tv:2 = t:2;
+  r = tv * zext(sv == 0) + zext(sv & lo) * 0x8000 + zext(sv & hi) * 0x7fff;
+}
+macro sub16asl(a, b, s, r, o) {
+  local aa:2 = a; local bb:2 = b;
+  local t:4 = (sext(aa) - sext(bb)) << 1;
+  o = sborrow(aa, bb) | (t s> 0x7fff) | (t s< -0xffff);
+  local lo:1 = t s< -0x8000; local hi:1 = t s> 0x7fff; local sv:1 = (s != 0:1) & (lo | hi);
+  local tv:2 = t:2;
+  r = tv * zext(sv == 0) + zext(sv & lo) * 0x8000 + zext(sv & hi) * 0x7fff;
+}
+# 32-bit add/subtract with optional saturation and the full flag update.
+macro add32f(a, b, s, r) {
+  local sum:4 = a + b;
+  local ov:1 = scarry(a, b);
+  local sv:1 = ov & (s != 0:1);
+  r = sum * zext(sv == 0) + (0x7fffffff + zext(a s< 0)) * zext(sv);
+  setnz(r); setv(ov); setac0(carry(a, b));
+}
+macro sub32f(a, b, s, r) {
+  local dif:4 = a - b;
+  local ov:1 = sborrow(a, b);
+  local sv:1 = ov & (s != 0:1);
+  r = dif * zext(sv == 0) + (0x7fffffff + zext(a s< 0)) * zext(sv);
+  setnz(r); setv(ov); setac0(b <= a);
+}
+# x (CO) exchanges the halves of a vector result.
+macro vput(d, hi, lo, xx) {
+  d = zext(xx == 0:1) * ((zext(hi) << 16) | zext(lo)) + zext(xx != 0:1) * ((zext(lo) << 16) | zext(hi));
+}
+macro vflags(ch, cl, oh, ol, rh, rl) {
+  AC1 = ch; setac0(cl);
+  AZ = (rh == 0) | (rl == 0);
+  AN = (rh s< 0) | (rl s< 0);
+  setv(oh | ol);
+}
+macro sext40(a) { a = sext(a:5); }
+
+# ---- aopcde 0: vector add/subtract of halves ---------------------------------
+
+DSP: xdr9 "=" xdr3 "+|+" xdr0 AMOD0 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=0; x12 & x13 & x14_15=0 & xdr9 & xdr3 & xdr0 & AMOD0) {
+  local rh:2; local rl:2; local ch:1; local cl:1; local oh:1; local ol:1;
+  add16(xdr3(2), xdr0(2), x13, rh, ch, oh); add16(xdr3:2, xdr0:2, x13, rl, cl, ol);
+  vflags(ch, cl, oh, ol, rh, rl); vput(xdr9, rh, rl, x12);
+}
+DSP: xdr9 "=" xdr3 "+|-" xdr0 AMOD0 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=0; x12 & x13 & x14_15=1 & xdr9 & xdr3 & xdr0 & AMOD0) {
+  local rh:2; local rl:2; local ch:1; local cl:1; local oh:1; local ol:1;
+  add16(xdr3(2), xdr0(2), x13, rh, ch, oh); sub16(xdr3:2, xdr0:2, x13, rl, cl, ol);
+  vflags(ch, cl, oh, ol, rh, rl); vput(xdr9, rh, rl, x12);
+}
+DSP: xdr9 "=" xdr3 "-|+" xdr0 AMOD0 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=0; x12 & x13 & x14_15=2 & xdr9 & xdr3 & xdr0 & AMOD0) {
+  local rh:2; local rl:2; local ch:1; local cl:1; local oh:1; local ol:1;
+  sub16(xdr3(2), xdr0(2), x13, rh, ch, oh); add16(xdr3:2, xdr0:2, x13, rl, cl, ol);
+  vflags(ch, cl, oh, ol, rh, rl); vput(xdr9, rh, rl, x12);
+}
+DSP: xdr9 "=" xdr3 "-|-" xdr0 AMOD0 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=0; x12 & x13 & x14_15=3 & xdr9 & xdr3 & xdr0 & AMOD0) {
+  local rh:2; local rl:2; local ch:1; local cl:1; local oh:1; local ol:1;
+  sub16(xdr3(2), xdr0(2), x13, rh, ch, oh); sub16(xdr3:2, xdr0:2, x13, rl, cl, ol);
+  vflags(ch, cl, oh, ol, rh, rl); vput(xdr9, rh, rl, x12);
+}
+
+# ---- aopcde 1: quad add/subtract (dst1 gets the sums, dst0 the differences) --
+
+macro quadfl(a, b, c, d) {
+  AZ = (a == 0) | (b == 0) | (c == 0) | (d == 0);
+  AN = (a s< 0) | (b s< 0) | (c s< 0) | (d s< 0);
+}
+DSP: xdr6 "=" xdr3 "+|+" xdr0 "," xdr9 "=" xdr3b "-|-" xdr0b AMOD02 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=1 & w5=0; x12 & x13 & (x14_15=0 | x14_15=1) & xdr6 & xdr3 & xdr0 & xdr9 & xdr3b & xdr0b & AMOD02) {
+  local ah:2; local al:2; local sh:2; local sl:2; local c:1; local o1:1; local o2:1; local o3:1; local o4:1;
+  add16(xdr3(2), xdr0(2), x13, ah, c, o1); add16(xdr3:2, xdr0:2, x13, al, c, o2);
+  sub16(xdr3(2), xdr0(2), x13, sh, c, o3); sub16(xdr3:2, xdr0:2, x13, sl, c, o4);
+  quadfl(ah, al, sh, sl); setv(o1 | o2 | o3 | o4);
+  xdr6 = (zext(ah) << 16) | zext(al); vput(xdr9, sh, sl, x12);
+}
+DSP: xdr6 "=" xdr3 "+|+" xdr0 "," xdr9 "=" xdr3b "-|-" xdr0b AMOD02 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=1 & w5=0; x12 & x13 & x14_15=2 & xdr6 & xdr3 & xdr0 & xdr9 & xdr3b & xdr0b & AMOD02) {
+  local ah:2; local al:2; local sh:2; local sl:2; local o1:1; local o2:1; local o3:1; local o4:1;
+  add16asr(xdr3(2), xdr0(2), x13, ah, o1); add16asr(xdr3:2, xdr0:2, x13, al, o2);
+  sub16asr(xdr3(2), xdr0(2), x13, sh, o3); sub16asr(xdr3:2, xdr0:2, x13, sl, o4);
+  quadfl(ah, al, sh, sl); setv(o1 | o2 | o3 | o4);
+  xdr6 = (zext(ah) << 16) | zext(al); vput(xdr9, sh, sl, x12);
+}
+DSP: xdr6 "=" xdr3 "+|+" xdr0 "," xdr9 "=" xdr3b "-|-" xdr0b AMOD02 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=1 & w5=0; x12 & x13 & x14_15=3 & xdr6 & xdr3 & xdr0 & xdr9 & xdr3b & xdr0b & AMOD02) {
+  local ah:2; local al:2; local sh:2; local sl:2; local o1:1; local o2:1; local o3:1; local o4:1;
+  add16asl(xdr3(2), xdr0(2), x13, ah, o1); add16asl(xdr3:2, xdr0:2, x13, al, o2);
+  sub16asl(xdr3(2), xdr0(2), x13, sh, o3); sub16asl(xdr3:2, xdr0:2, x13, sl, o4);
+  quadfl(ah, al, sh, sl); setv(o1 | o2 | o3 | o4);
+  xdr6 = (zext(ah) << 16) | zext(al); vput(xdr9, sh, sl, x12);
+}
+DSP: xdr6 "=" xdr3 "+|-" xdr0 "," xdr9 "=" xdr3b "-|+" xdr0b AMOD02 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=1 & w5=1; x12 & x13 & (x14_15=0 | x14_15=1) & xdr6 & xdr3 & xdr0 & xdr9 & xdr3b & xdr0b & AMOD02) {
+  local ah:2; local sl:2; local sh:2; local al:2; local c:1; local o1:1; local o2:1; local o3:1; local o4:1;
+  add16(xdr3(2), xdr0(2), x13, ah, c, o1); sub16(xdr3:2, xdr0:2, x13, sl, c, o2);
+  sub16(xdr3(2), xdr0(2), x13, sh, c, o3); add16(xdr3:2, xdr0:2, x13, al, c, o4);
+  quadfl(ah, sl, sh, al); setv(o1 | o2 | o3 | o4);
+  xdr6 = (zext(ah) << 16) | zext(sl); vput(xdr9, sh, al, x12);
+}
+DSP: xdr6 "=" xdr3 "+|-" xdr0 "," xdr9 "=" xdr3b "-|+" xdr0b AMOD02 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=1 & w5=1; x12 & x13 & x14_15=2 & xdr6 & xdr3 & xdr0 & xdr9 & xdr3b & xdr0b & AMOD02) {
+  local ah:2; local sl:2; local sh:2; local al:2; local o1:1; local o2:1; local o3:1; local o4:1;
+  add16asr(xdr3(2), xdr0(2), x13, ah, o1); sub16asr(xdr3:2, xdr0:2, x13, sl, o2);
+  sub16asr(xdr3(2), xdr0(2), x13, sh, o3); add16asr(xdr3:2, xdr0:2, x13, al, o4);
+  quadfl(ah, sl, sh, al); setv(o1 | o2 | o3 | o4);
+  xdr6 = (zext(ah) << 16) | zext(sl); vput(xdr9, sh, al, x12);
+}
+DSP: xdr6 "=" xdr3 "+|-" xdr0 "," xdr9 "=" xdr3b "-|+" xdr0b AMOD02 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=1 & w5=1; x12 & x13 & x14_15=3 & xdr6 & xdr3 & xdr0 & xdr9 & xdr3b & xdr0b & AMOD02) {
+  local ah:2; local sl:2; local sh:2; local al:2; local o1:1; local o2:1; local o3:1; local o4:1;
+  add16asl(xdr3(2), xdr0(2), x13, ah, o1); sub16asl(xdr3:2, xdr0:2, x13, sl, o2);
+  sub16asl(xdr3(2), xdr0(2), x13, sh, o3); add16asl(xdr3:2, xdr0:2, x13, al, o4);
+  quadfl(ah, sl, sh, al); setv(o1 | o2 | o3 | o4);
+  xdr6 = (zext(ah) << 16) | zext(sl); vput(xdr9, sh, al, x12);
+}
+
+# ---- aopcde 2/3: 16-bit add/subtract of selected halves ----------------------
+
+DSP: DSTH "=" S0H "+" S1H AMOD1 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=2; x13 & S0H & S1H & AMOD1) & DSTH {
+  local r:2; local c:1; local o:1;
+  add16(S0H, S1H, x13, r, c, o);
+  setac0(c); setv(o); AN = r s< 0; AZ = r == 0; DSTH = r;
+}
+DSP: DSTH "=" S0H "-" S1H AMOD1 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=3; x13 & S0H & S1H & AMOD1) & DSTH {
+  local r:2; local c:1; local o:1;
+  sub16(S0H, S1H, x13, r, c, o);
+  setac0(c); setv(o); AN = r s< 0; AZ = r == 0; DSTH = r;
+}
+
+# ---- aopcde 4: 32-bit add/subtract --------------------------------------------
+
+DSP: xdr9 "=" xdr3 "+" xdr0 AMOD1 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=4; x13 & x14_15=0 & xdr9 & xdr3 & xdr0 & AMOD1) {
+  local r:4; add32f(xdr3, xdr0, x13, r); xdr9 = r;
+}
+DSP: xdr9 "=" xdr3 "-" xdr0 AMOD1 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=4; x13 & x14_15=1 & xdr9 & xdr3 & xdr0 & AMOD1) {
+  local r:4; sub32f(xdr3, xdr0, x13, r); xdr9 = r;
+}
+DSP: xdr6 "=" xdr3 "+" xdr0 "," xdr9 "=" xdr3b "-" xdr0b AMOD1 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=4; x13 & x14_15=2 & xdr6 & xdr3 & xdr0 & xdr9 & xdr3b & xdr0b & AMOD1) {
+  # The difference only adds to the flags of the sum (parallel update).
+  local a:4 = xdr3; local b:4 = xdr0;
+  local r1:4; add32f(a, b, x13, r1);
+  local dif:4 = a - b; local ov:1 = sborrow(a, b); local sv:1 = ov & (x13 != 0:1);
+  local r0:4 = dif * zext(sv == 0) + (0x7fffffff + zext(a s< 0)) * zext(sv);
+  AN = AN | (r0 s< 0); AZ = AZ | (r0 == 0); setv(V | ov); setac0(AC0 | (b <= a));
+  xdr6 = r1; xdr9 = r0;
+}
+
+# ---- aopcde 5: add/subtract with rounding to 12 or 20 bits ------------------------
+
+macro rnd12(a, b0, sub, d) {
+  local b:4 = b0;
+  b = zext(sub == 0) * b + zext(sub != 0) * (zext(b == 0x80000000) * 0x7fffffff + zext(b != 0x80000000) * -b);
+  local s1:1 = a s< 0; local s2:1 = b s< 0;
+  local res:4 = a + b; local sr1:1 = res s< 0;
+  res = res + 0x800; local sr2:1 = res s< 0;
+  local sg:4 = res s>> 27;
+  local ov:1 = ((s1 == s2) & (s1 != sr1)) | ((s1 == 0) & (s2 == 0) & sr2) | ((sg != 0) & (sg != 0xffffffff));
+  local sat:4 = zext(s1 & s2) * 0x80000000 + zext((s1 | s2) == 0) * 0x7fffffff
+              + zext(s1 != s2) * (zext(sr1) * 0x80000000 + zext(sr1 == 0) * 0x7fffffff);
+  local f:4 = zext(ov) * sat + zext(ov == 0) * (res << 4);
+  f = f s>> 16;
+  d = f:2;
+  AZ = f == 0; AN = (f & 0x8000) != 0; setv(ov);
+}
+macro rnd20(a, b0, sub, d) {
+  local b:4 = b0;
+  b = zext(sub == 0) * b + zext(sub != 0) * -b;
+  local res:4 = (a s>> 4) + (b s>> 4) + (((a & 0xf) + (b & 0xf)) s>> 4);
+  res = (res + 0x8000) >> 16;
+  d = res:2;
+  AZ = res == 0; AN = (res & 0x8000) != 0; V = 0; V_COPY = 0;
+}
+DSP: DSTH "=" xdr3 "+" xdr0 "(RND12)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=5; x14_15=0 & x12=0 & xdr3 & xdr0) & DSTH { local d:2; rnd12(xdr3, xdr0, 0:1, d); DSTH = d; }
+DSP: DSTH "=" xdr3 "-" xdr0 "(RND12)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=5; x14_15=1 & x12=0 & xdr3 & xdr0) & DSTH { local d:2; rnd12(xdr3, xdr0, 1:1, d); DSTH = d; }
+DSP: DSTH "=" xdr3 "+" xdr0 "(RND20)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=5; x14_15=2 & x12=1 & xdr3 & xdr0) & DSTH { local d:2; rnd20(xdr3, xdr0, 0:1, d); DSTH = d; }
+DSP: DSTH "=" xdr3 "-" xdr0 "(RND20)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=5; x14_15=3 & x12=1 & xdr3 & xdr0) & DSTH { local d:2; rnd20(xdr3, xdr0, 1:1, d); DSTH = d; }
+
+# ---- aopcde 6/7: ABS, MIN, MAX (vector and 32-bit), negate -------------------
+
+macro nz2x16(r) {
+  local lo:2 = r:2; local hi:2 = r(2);
+  AN = (lo s< 0) | (hi s< 0);
+  AZ = (lo == 0) | (hi == 0);
+}
+DSP: xdr9 "= ABS" xdr3 "(V)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=6; x14_15=2 & xdr9 & xdr3) {
+  local h:2 = xdr3(2); local l:2 = xdr3:2;
+  local ah:2 = zext(h s< 0) * -h + zext(h s>= 0) * h;
+  local al:2 = zext(l s< 0) * -l + zext(l s>= 0) * l;
+  local vh:1 = ah == 0x8000; local vl:1 = al == 0x8000;
+  ah = ah - zext(vh); al = al - zext(vl);
+  local r:4 = (zext(ah) << 16) | zext(al);
+  setv(vh | vl); nz2x16(r); xdr9 = r;
+}
+DSP: xdr9 "= MIN ("^xdr3^","^xdr0^") (V)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=6; x14_15=1 & xdr9 & xdr3 & xdr0) {
+  local ah:2 = xdr3(2); local al:2 = xdr3:2; local bh:2 = xdr0(2); local bl:2 = xdr0:2;
+  local h:2 = zext(ah s> bh) * bh + zext(ah s<= bh) * ah;
+  local l:2 = zext(al s> bl) * bl + zext(al s<= bl) * al;
+  local r:4 = (zext(h) << 16) | zext(l);
+  nz2x16(r); V = 0; V_COPY = 0; xdr9 = r;
+}
+DSP: xdr9 "= MAX ("^xdr3^","^xdr0^") (V)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=6; x14_15=0 & xdr9 & xdr3 & xdr0) {
+  local ah:2 = xdr3(2); local al:2 = xdr3:2; local bh:2 = xdr0(2); local bl:2 = xdr0:2;
+  local h:2 = zext(ah s< bh) * bh + zext(ah s>= bh) * ah;
+  local l:2 = zext(al s< bl) * bl + zext(al s>= bl) * al;
+  local r:4 = (zext(h) << 16) | zext(l);
+  nz2x16(r); V = 0; V_COPY = 0; xdr9 = r;
+}
+DSP: xdr9 "= MIN ("^xdr3^","^xdr0^")" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=7; x14_15=1 & xdr9 & xdr3 & xdr0) {
+  local a:4 = xdr3; local b:4 = xdr0;
+  local r:4 = zext(a s> b) * b + zext(a s<= b) * a;
+  setnz(r); V = 0; V_COPY = 0; xdr9 = r;
+}
+DSP: xdr9 "= MAX ("^xdr3^","^xdr0^")" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=7; x14_15=0 & xdr9 & xdr3 & xdr0) {
+  local a:4 = xdr3; local b:4 = xdr0;
+  local r:4 = zext(a s< b) * b + zext(a s>= b) * a;
+  setnz(r); V = 0; V_COPY = 0; xdr9 = r;
+}
+DSP: xdr9 "= ABS" xdr3 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=7; x14_15=2 & xdr9 & xdr3) {
+  local a:4 = xdr3;
+  local r:4 = zext(a s< 0) * -a + zext(a s>= 0) * a;
+  local o:1 = r == 0x80000000;
+  r = r - zext(o);
+  setv(o); setnz(r); xdr9 = r;
+}
+DSP: xdr9 "= -"^xdr3 "(S)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=7 & w5=0; x14_15=3 & x13=1 & xdr9 & xdr3) {
+  local a:4 = xdr3; local o:1 = a == 0x80000000;
+  local r:4 = -a - zext(o);
+  V = V | o; V_COPY = V_COPY | o; VS = VS | o;
+  AZ = r == 0; AN = r s< 0; xdr9 = r;
+}
+DSP: xdr9 "= -"^xdr3 "(NS)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=7 & w5=0; x14_15=3 & x13=0 & xdr9 & xdr3) {
+  local r:4 = -xdr3;
+  AZ = r == 0; AN = r s< 0; xdr9 = r;
+}
+
+# ---- aopcde 8: accumulator clear, saturate, copy ----------------------------------
+
+macro accsat32(a, av, avs, z, n) {
+  local v:8 = sext(a:5);
+  local lo:1 = v s< -0x80000000; local hi:1 = v s> 0x7fffffff;
+  local t:4 = v:4;
+  t = zext((lo | hi) == 0) * t + zext(lo) * 0x80000000 + zext(hi) * 0x7fffffff;
+  a = sext(t);
+  av = lo | hi; avs = avs | av;
+  z = t == 0; n = t s< 0;
+}
+DSP: "A0 = 0" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=8; x14_15=0 & x13=0) { A0 = 0; }
+DSP: "A1 = 0" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=8; x14_15=1 & x13=0) { A1 = 0; }
+DSP: "A1 = A0 = 0" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=8; x14_15=2 & x13=0) { A0 = 0; A1 = 0; }
+DSP: "A0 = A0 (S)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=8; x14_15=0 & x13=1) { local z:1; local n:1; accsat32(A0, AV0, AV0S, z, n); AZ = z; AN = n; }
+DSP: "A1 = A1 (S)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=8; x14_15=1 & x13=1) { local z:1; local n:1; accsat32(A1, AV1, AV1S, z, n); AZ = z; AN = n; }
+DSP: "A1 = A1 (S), A0 = A0 (S)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=8; x14_15=2 & x13=1) {
+  local z0:1; local n0:1; local z1:1; local n1:1;
+  accsat32(A0, AV0, AV0S, z0, n0); accsat32(A1, AV1, AV1S, z1, n1);
+  AZ = z0 | z1; AN = n0 | n1;
+}
+DSP: "A0 = A1" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=8; x14_15=3 & x13=0) { A0 = A1; }
+DSP: "A1 = A0" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=8; x14_15=3 & x13=1) { A1 = A0; }
+
+# ---- aopcde 9/10: accumulator loads, A.X reads -------------------------------------
+
+DSP: "A0.L =" xdl3 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=9 & w5=0; x14_15=0 & x13=0 & xdl3) { A0.L = xdl3; }
+DSP: "A0.H =" xdh3 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=9 & w5=1; x14_15=0 & x13=0 & xdh3) { A0.H = xdh3; }
+DSP: "A1.L =" xdl3 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=9 & w5=0; x14_15=2 & x13=0 & xdl3) { A1.L = xdl3; }
+DSP: "A1.H =" xdh3 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=9 & w5=1; x14_15=2 & x13=0 & xdh3) { A1.H = xdh3; }
+DSP: "A0 =" xdr3 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=9; x14_15=0 & x13=1 & xdr3) { A0 = sext(xdr3); }
+DSP: "A1 =" xdr3 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=9; x14_15=2 & x13=1 & xdr3) { A1 = sext(xdr3); }
+DSP: "A0.X =" xdl3 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=9; x14_15=1 & x13=0 & xdl3 & xdr3) { A0.X = xdr3:1; }
+DSP: "A1.X =" xdl3 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=9; x14_15=3 & x13=0 & xdl3 & xdr3) { A1.X = xdr3:1; }
+DSP: xdl9 "= A0.X" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=10; x14_15=0 & xdl9) { xdl9 = sext(A0.X); }
+DSP: xdl9 "= A1.X" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=10; x14_15=1 & xdl9) { xdl9 = sext(A1.X); }
+
+# ---- aopcde 11: A0 += A1 / A0 -= A1 ----------------------------------------------------
+
+# A0 += A1 with 40-bit saturation; leaves the carry in c and the unsaturated flag in v.
+macro accadd(c, v) {
+  local a0:8 = sext(A0:5); local a1:8 = sext(A1:5);
+  c = ~a1 < a0;
+  local t:8 = a0 + a1;
+  sat40s(t, v);
+  A0 = t;
+  AV0 = v & (a1 != 0); AV0S = AV0S | v;
+}
+DSP: xdr9 "= (A0 += A1)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=11; x14_15=0 & xdr9) {
+  local c:1; local v:1; accadd(c, v);
+  local o:1 = 0; local r:4; sat_s32(A0, r, o);
+  xdr9 = r; AZ = r == 0; AN = r s< 0; setac0(c); V = o; V_COPY = o; VS = VS | o;
+}
+DSP: DSTH "= (A0 += A1)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=11; x14_15=1) & DSTH {
+  local c:1; local v:1; accadd(c, v);
+  local x:8 = sext(A0:5); rnd16(x); x = x << 16;
+  local o:1 = 0; local r:4; sat_s32(x, r, o);
+  DSTH = r(2); AZ = r == 0; AN = r s< 0; setac0(c); V = o; V_COPY = o; VS = VS | o;
+}
+DSP: "A0 += A1" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=11; x14_15=2 & x13=0) {
+  local c:1; local v:1; accadd(c, v);
+  AZ = A0:5 == 0; AN = (A0.X & 0x80) != 0; setac0(c);
+}
+DSP: "A0 += A1 (W32)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=11; x14_15=2 & x13=1) {
+  local c:1; local v:1; accadd(c, v);
+  local neg:1 = (A0.X & 0x80) != 0;
+  A0 = zext(A0:4) | zext(neg) * 0x8000000000;
+  AZ = A0:5 == 0; AN = neg; setac0(c);
+}
+macro accsub(w32) {
+  local a0:8 = sext(A0:5); local a1:8 = sext(A1:5);
+  local c:1 = a1 < a0;
+  local t:8 = a0 - a1;
+  local lo:1 = t s< -0x8000000000; local hi:1 = t s>= 0x7fffffffff;
+  t = zext((lo | hi) == 0) * t + zext(lo) * 0xffffff8000000000 + zext(hi) * 0x7fffffffff;
+  local neg:1 = (t & 0x8000000000) != 0;
+  local w:1 = w32;
+  t = zext(w == 0) * t + zext(w != 0) * ((t & 0xffffffff) | zext(neg) * 0x8000000000);
+  local sat:1 = lo | hi | (w & neg);
+  A0 = t;
+  AZ = t == 0; AN = neg; setac0(c); AV0 = sat; AV0S = AV0S | sat;
+}
+DSP: "A0 -= A1" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=11; x14_15=3 & x13=0) { accsub(0:1); }
+DSP: "A0 -= A1 (W32)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=11; x14_15=3 & x13=1) { accsub(1:1); }
+
+# ---- aopcde 12: RND, SIGN multiply-add, accumulator half sums ---------------------
+
+DSP: DSTH "=" xdr3 "(RND)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=12; x14_15=3 & xdr3) & DSTH {
+  local v:4 = xdr3; local sb:1 = v s< 0;
+  v = v + 0x8000; local sa:1 = v s< 0;
+  local ov:1 = ((v s>> 16) != 0) & (sb != sa);
+  local r:4 = zext(ov) * (zext(sb) * 0x8000 + zext(sb == 0) * 0x7fff) + zext(ov == 0) * (v s>> 16);
+  DSTH = r:2; AZ = r == 0; AN = r s< 0; setv(ov);
+}
+DSP: xdh9 "=" xdl9 "= SIGN ("^xdh3^") *" xdh0 "+ SIGN ("^xdl3^") *" xdl0 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=12; x14_15=0 & xdh9 & xdl9 & xdh3 & xdh0 & xdl3 & xdl0 & xdr9) {
+  local h:2 = zext(xdh3 s< 0) * -xdh0 + zext(xdh3 s>= 0) * xdh0;
+  local l:2 = zext(xdl3 s< 0) * -xdl0 + zext(xdl3 s>= 0) * xdl0;
+  local s:2 = h + l;
+  xdr9 = (zext(s) << 16) | zext(s);
+}
+DSP: xdr6 "= A1.L + A1.H," xdr9 "= A0.L + A0.H" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=12; x14_15=1 & xdr6 & xdr9) {
+  local r0:4 = sext(A0.H) + sext(A0.L);
+  local r1:4 = sext(A1.H) + sext(A1.L);
+  xdr9 = r0; xdr6 = r1;
+}
+
+# ---- aopcde 13: SEARCH -------------------------------------------------------------
+
+SMODE: "GT" is x14_15=0 { local h:1 = MA1 s> A1.L; local l:1 = MA0 s> A0.L; PSAT1 = h; PSAT0 = l; }
+SMODE: "GE" is x14_15=1 { local h:1 = MA1 s>= A1.L; local l:1 = MA0 s>= A0.L; PSAT1 = h; PSAT0 = l; }
+SMODE: "LT" is x14_15=2 { local h:1 = MA1 s< A1.L; local l:1 = MA0 s< A0.L; PSAT1 = h; PSAT0 = l; }
+SMODE: "LE" is x14_15=3 { local h:1 = MA1 s<= A1.L; local l:1 = MA0 s<= A0.L; PSAT1 = h; PSAT0 = l; }
+DSP: "("^xdr6^","^xdr9^") = SEARCH" xdr3 "("^SMODE^")" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=13; xdr6 & xdr9 & xdr3 & SMODE) {
+  MA1 = xdr3(2); MA0 = xdr3:2;
+  build SMODE;
+  local n1:2 = zext(PSAT1) * MA1 + zext(PSAT1 == 0) * A1.L;
+  local n0:2 = zext(PSAT0) * MA0 + zext(PSAT0 == 0) * A0.L;
+  A1 = sext(n1); A0 = sext(n0);
+  xdr6 = zext(PSAT1) * P0 + zext(PSAT1 == 0) * xdr6;
+  xdr9 = zext(PSAT0) * P0 + zext(PSAT0 == 0) * xdr9;
+}
+
+# ---- aopcde 14/16: accumulator negate and absolute value ------------------------
+
+macro accneg(src, dst, av, avs, ac) {
+  local a:8 = sext(src:5);
+  local t:8 = -a; local v:1;
+  sat40s(t, v);
+  dst = t;
+  AZ = t:5 == 0; AN = (t & 0x8000000000) != 0;
+  ac = a == 0; av = v; avs = avs | v;
+}
+DSP: "A0 = -A0" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=14 & w5=0; x14_15=0) { accneg(A0, A0, AV0, AV0S, AC0); AC0_COPY = AC0; }
+DSP: "A0 = -A1" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=14 & w5=0; x14_15=1) { accneg(A1, A0, AV0, AV0S, AC0); AC0_COPY = AC0; }
+DSP: "A1 = -A0" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=14 & w5=1; x14_15=0) { accneg(A0, A1, AV1, AV1S, AC1); }
+DSP: "A1 = -A1" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=14 & w5=1; x14_15=1) { accneg(A1, A1, AV1, AV1S, AC1); }
+DSP: "A1 = -A1, A0 = -A0" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=14 & w5=0; x14_15=3) {
+  local v:1;
+  local t0:8 = -sext(A0:5); sat40s(t0, v); A0 = t0;
+  local t1:8 = -sext(A1:5); sat40s(t1, v); A1 = t1;
+}
+macro accabs(src, dst, av, avs, z) {
+  local a:8 = sext(src:5);
+  a = zext(a s< 0) * -a + zext(a s>= 0) * a;
+  local v:1 = a == 0x8000000000;
+  a = a - zext(v);
+  dst = a; av = v; avs = avs | v; z = a == 0;
+}
+DSP: "A0 = ABS A0" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=16 & w5=0; x14_15=0) { local z:1; accabs(A0, A0, AV0, AV0S, z); AZ = z; AN = 0; }
+DSP: "A0 = ABS A1" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=16 & w5=0; x14_15=1) { local z:1; accabs(A1, A0, AV0, AV0S, z); AZ = z; AN = 0; }
+DSP: "A1 = ABS A0" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=16 & w5=1; x14_15=0) { local z:1; accabs(A0, A1, AV1, AV1S, z); AZ = z; AN = 0; }
+DSP: "A1 = ABS A1" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=16 & w5=1; x14_15=1) { local z:1; accabs(A1, A1, AV1, AV1S, z); AZ = z; AN = 0; }
+DSP: "A1 = ABS A1, A0 = ABS A0" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=16 & w5=0; x14_15=3) {
+  local z0:1; local z1:1;
+  accabs(A0, A0, AV0, AV0S, z0); accabs(A1, A1, AV1, AV1S, z1);
+  AZ = z0 | z1; AN = 0;
+}
+
+# ---- aopcde 15: vector negate ------------------------------------------------------
+
+DSP: xdr9 "= -"^xdr3 "(V)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=15 & w5=0; x14_15=3 & xdr9 & xdr3) {
+  local h:2 = -xdr3(2); local l:2 = -xdr3:2;
+  local vh:1 = h == 0x8000; local vl:1 = l == 0x8000;
+  h = h - zext(vh); l = l - zext(vl);
+  AC1 = (vh == 0) & (h == 0); setac0((vl == 0) & (l == 0));
+  local r:4 = (zext(h) << 16) | zext(l);
+  setv(vh | vl); nz2x16(r); xdr9 = r;
+}
+
+# ---- aopcde 17: dual accumulator add/subtract into data registers ---------------
+
+macro acc2(aop, s) {
+  local a0:8 = sext(A0:5); local a1:8 = sext(A1:5);
+  local v1:8 = a0 + a1;
+  local v0:8 = zext(aop == 1) * (a0 - a1) + zext(aop == 0) * (a1 - a0);
+  local o:1 = 0; local s0:4; local s1:4;
+  sat_s32(v0, s0, o); sat_s32(v1, s1, o);
+  local r0:4 = zext(s != 0:1) * s0 + zext(s == 0:1) * v0:4;
+  local r1:4 = zext(s != 0:1) * s1 + zext(s == 0:1) * v1:4;
+  setv(o);
+  AN = (r0 s< 0) | (r1 s< 0);
+  AZ = (zext(s != 0:1) * zext(r0) + zext(s == 0:1) * v0 == 0) | (zext(s != 0:1) * zext(r1) + zext(s == 0:1) * v1 == 0);
+  AC1 = ~a0 < a1;
+  local c0:1 = ((aop == 1) & (a1 <= a0)) | ((aop == 0) & (a0 <= a1));
+  setac0(c0);
+  MV = r1; RES0 = r0;
+}
+DSP: xdr6 "= A1 + A0," xdr9 "= A1 - A0" AMOD1 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=17; x13 & x14_15=0 & xdr6 & xdr9 & AMOD1) {
+  acc2(0:1, x13); xdr6 = MV; xdr9 = RES0;
+}
+DSP: xdr6 "= A0 + A1," xdr9 "= A0 - A1" AMOD1 is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=17; x13 & x14_15=1 & xdr6 & xdr9 & AMOD1) {
+  acc2(1:1, x13); xdr6 = MV; xdr9 = RES0;
+}
+
+# ---- aopcde 18-24: byte-video operations -------------------------------------------
+
+DSP: "SAA ("^PAIRA^","^PAIRB^")" RDIR is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=18; x13 & x14_15=0 & PAIRA & PAIRB & RDIR) {
+  A0 = saa(PAIRA, PAIRB, I0, I1, A0, x13:1, 0:1);
+  A1 = saa(PAIRA, PAIRB, I0, I1, A1, x13:1, 1:1);
+}
+DSP: "DISALGNEXCPT" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=18; x14_15=3) { disalgnexcpt(); }
+DSP: xdr9 "= BYTEOP1P ("^PAIRA^","^PAIRB^")" RDIR is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=20; x13 & x14_15=0 & xdr9 & PAIRA & PAIRB & RDIR) {
+  xdr9 = byteop1p(PAIRA, PAIRB, I0, I1, x13:1, 0:1);
+}
+DSP: xdr9 "= BYTEOP1P ("^PAIRA^","^PAIRB^") (T)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=20; x14_15=1 & x13=0 & xdr9 & PAIRA & PAIRB) {
+  xdr9 = byteop1p(PAIRA, PAIRB, I0, I1, 0:1, 1:1);
+}
+DSP: xdr9 "= BYTEOP1P ("^PAIRA^","^PAIRB^") (T, R)" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=20; x14_15=1 & x13=1 & xdr9 & PAIRA & PAIRB) {
+  xdr9 = byteop1p(PAIRA, PAIRB, I0, I1, 1:1, 1:1);
+}
+DSP: "("^xdr6^","^xdr9^") = BYTEOP16P ("^PAIRA^","^PAIRB^")" RDIR is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=21; x13 & x14_15=0 & xdr6 & xdr9 & PAIRA & PAIRB & RDIR) {
+  local lo:4 = byteop16p(PAIRA, PAIRB, I0, I1, x13:1, 0:1);
+  xdr6 = byteop16p(PAIRA, PAIRB, I0, I1, x13:1, 1:1);
+  xdr9 = lo;
+}
+DSP: "("^xdr6^","^xdr9^") = BYTEOP16M ("^PAIRA^","^PAIRB^")" RDIR is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=21; x13 & x14_15=1 & xdr6 & xdr9 & PAIRA & PAIRB & RDIR) {
+  local lo:4 = byteop16m(PAIRA, PAIRB, I0, I1, x13:1, 0:1);
+  xdr6 = byteop16m(PAIRA, PAIRB, I0, I1, x13:1, 1:1);
+  xdr9 = lo;
+}
+B2MODE: "(RNDL)" is w5=0; x14_15=0 & x13=0 { }
+B2MODE: "(RNDL, R)" is w5=0; x14_15=0 & x13=1 { }
+B2MODE: "(RNDH)" is w5=1; x14_15=0 & x13=0 { }
+B2MODE: "(RNDH, R)" is w5=1; x14_15=0 & x13=1 { }
+B2MODE: "(TL)" is w5=0; x14_15=1 & x13=0 { }
+B2MODE: "(TL, R)" is w5=0; x14_15=1 & x13=1 { }
+B2MODE: "(TH)" is w5=1; x14_15=1 & x13=0 { }
+B2MODE: "(TH, R)" is w5=1; x14_15=1 & x13=1 { }
+DSP: xdr9 "= BYTEOP2P ("^PAIRA^","^PAIRB^")" B2MODE is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=22 & w5; x13 & x15=0 & x14 & xdr9 & PAIRA & PAIRB) & B2MODE {
+  xdr9 = byteop2p(PAIRA, PAIRB, I0, I1, x13:1, w5:1, x14:1);
+}
+B3MODE: "(LO)" is w5=0; x13=0 { }
+B3MODE: "(LO, R)" is w5=0; x13=1 { }
+B3MODE: "(HI)" is w5=1; x13=0 { }
+B3MODE: "(HI, R)" is w5=1; x13=1 { }
+DSP: xdr9 "= BYTEOP3P ("^PAIRA^","^PAIRB^")" B3MODE is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=23 & w5; x13 & x14_15=0 & xdr9 & PAIRA & PAIRB) & B3MODE {
+  xdr9 = byteop3p(PAIRA, PAIRB, I0, I1, x13:1, w5:1);
+}
+DSP: xdr9 "= BYTEPACK ("^xdr3^","^xdr0^")" is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=24; x14_15=0 & xdr9 & xdr3 & xdr0) {
+  xdr9 = (xdr3 & 0xff) | ((xdr3 >> 8) & 0xff00) | ((xdr0 & 0xff) << 16) | ((xdr0 << 8) & 0xff000000);
+}
+DSP: "("^xdr6^","^xdr9^") = BYTEUNPACK" PAIRA RDIR is (w12_15=0xc & w9_10=2 & w6_8=0 & w0_4=24; x13 & x14_15=1 & xdr6 & xdr9 & PAIRA & RDIR) {
+  local c:8 = PAIRA;
+  c = zext(x13 == 0:1) * c + zext(x13 != 0:1) * ((c << 32) | (c >> 32));
+  c = c >> ((I0 & 3) * 8);
+  local lo:4 = (c:4 & 0xff) | ((c:4 << 8) & 0xff0000);
+  local hi:4 = ((c:4 >> 16) & 0xff) | ((c:4 >> 8) & 0xff0000);
+  xdr9 = lo; xdr6 = hi;
+}

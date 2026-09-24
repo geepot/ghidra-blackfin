@@ -1,161 +1,86 @@
-# Experimental Blackfin processor module for Ghidra
+# Blackfin processor module for Ghidra
 
-This directory contains a free, open-source Ghidra 11.4.2 processor
-extension for the classic Analog Devices Blackfin ISA used by the
-CDJ-2000NXS GUI processor (ADSP-BF531).
+SLEIGH language `Blackfin:LE:32:default` for the classic Analog Devices
+Blackfin ISA (ADSP-BF53x), as used by the CDJ-2000NXS GUI processor
+(ADSP-BF531). It decodes the whole instruction set, including multi-issue
+packets, and gives every instruction p-code semantics.
 
-It is usable today for instruction alignment, direct and indirect branch/call
-recovery, stack-frame recognition, full architectural register moves and
-immediate construction, hardware-loop setup, common condition-code operations,
-DAG/pointer memory traffic, three-register data/pointer arithmetic,
-byte/halfword post-modify loads and stores, signed-offset loads/stores, and the
-memory slots of common compiler-generated multi-issue packets.
+## What it models
 
-This is still an experimental, corpus-driven port, not a complete Blackfin ISA
-implementation. Unsupported 16-bit classes decode as `BFIN16`, unsupported
-32-bit DSP primaries as `DSP32`, and unsupported 32-bit non-DSP encodings as
-`BFIN32`. `DSP32_MULTI` consumes the full eight-byte packet and lifts supported
-parallel memory slots, but its DSP32 primary operation is still opaque. A
-`PAR16A` or `PAR16B` operand means that parallel slot also has no semantics.
-These placeholders provide the correct length in the measured CDJ firmware
-corpora described below; synchronization for unmeasured ISA encodings is not
-claimed.
+- **All encodings GNU objdump decodes**, with objdump's assembly syntax
+  (spacing and number format aside, the listing text equals objdump's).
+  Offsets and immediates are shown scaled, as objdump shows them.
+- **Semantics as the GNU simulator executes them**: data results and
+  ASTAT flags (AZ, AN, AC0/AC1, V/VS, AV0/AV1, AQ, CC, the *_COPY bits) for
+  ALU, shift, bit-field, divide-step, 16x16 multiply and multiply-accumulate
+  in all ten modes (default, S2RND, T, W32, FU, TFU, IS, ISS2, IH, IU, with
+  and without (M)), 40-bit accumulators with saturation, SEARCH, BITMUX,
+  VIT_MAX, BXOR, EXPADJ, SIGNBITS, ONES, ALIGN, PACK, BYTEPACK/BYTEUNPACK.
+- **Multi-issue packets** (`DSP32 || slot || slot`): the DSP operation runs
+  first; both 16-bit slots read the registers as they were before the packet
+  (a snapshot, the `*_P` registers), as the hardware does.
+- **Zero-overhead hardware loops**: `LSETUP` marks the loop-bottom
+  instruction in the context register; that instruction then decrements LC0
+  or LC1 and branches back to the loop top, so loops decompile as loops.
+- `CALL` sets RETS; `LINK`/`UNLINK` keep RETS above the saved FP; push/pop
+  multiple use the hardware register order; `CLI`/`STI` move IMASK.
 
-Remaining high-impact gaps include DSP32 arithmetic/shift semantics (including
-the primary operation in every multi-issue packet), ALU dynamic-shift/divide
-variants, complete halfword LDSTpmod pointer-update behavior, individual
-register effects for range push/pop sets other than the `R7:4/P5:3` ABI set,
-hardware-loop back-edge modeling, and specialized DSP/VLIW combinations.
+Opaque (user operations with honest inputs and outputs): the byte-video
+operations `BYTEOP1P/2P/3P/16P/16M` and `SAA`, `DISALGNEXCPT`, cache control,
+`IDLE`, `RAISE`, `EXCPT` and the simulator pseudo instructions (`DBG`, `OUTC`,
+`HLT`, `DBGA`...).
 
-## Measured corpus coverage
+Not modelled: circular DAG addressing (L0-L3 non-zero). I registers are plain
+pointers, as the GCC ABI keeps L0-L3 at zero.
 
-`BlackfinCorpusTest.java` linearly decodes two code corpora and keeps length and
-representative instruction regressions reproducible. GNU binutils Blackfin
-objdump is the instruction oracle.
+## Verification
 
-| Corpus | Instructions | `BFIN16` | `DSP32` | Multi-issue packets |
-| --- | ---: | ---: | ---: | ---: |
-| L1 bootstrap `0xffa08000-0xffa08585` | 537 | 4 (0.74%) | 8 (1.49%) | 0 |
-| Dense application-code subset `0x00d00000-0x00d3ffff` | 102,247 | 660 (0.65%) | 1,084 (1.06%) | 933 |
+Run from the workspace (`~/Ghidra/cdj2000nxs`) after `scripts/setup.sh extension`:
 
-The application subset is a defensible executable corpus rather than every
-initialized byte: it excludes later sparse and zero-filled material (the
-`0x00d50000-0x00d5ffff` slice, for example, has no GNU-decoded instructions).
-Of its 933 multi-issue packets, 330 still contain at
-least one `PAR16` slot; all 933 still have an opaque DSP32 primary. GNU decoding
-of both measured corpora agrees with the module's two-, four-, and eight-byte
-instruction boundaries. That is a corpus-bounded synchronization result, not
-a full-ISA proof.
+| Check | Script | Result |
+| --- | --- | --- |
+| Every 16-bit word, 1.5M sampled 32/64-bit encodings with random parallel slots, every encoding in the GUI image, against `objdump` | `scripts/bfin_isatest.py 16`, `32 96`, `gui` | identical except the two objdump quirks below |
+| Semantics against the GNU simulator (`run`, operating environment), random register states, a memory window per case | `scripts/bfin_semtest.py gui`, `16`, `dsp` | 62,700 + 59,914 + 18,764 cases, no mismatch |
+| Re-disassembled GUI program against `objdump`, per code run | `scripts/bfin_crosscheck.py` | 160,291 of 160,291 instructions agree |
 
-Before the register/DAG/loop expansion, the L1 corpus had 157 `BFIN16` and 58
-`DSP32` fallbacks. It now has 4 and 8 respectively, with the same 537
-instructions consuming the same 1,414 bytes.
+Known differences, both on the oracle side:
 
-## Provenance and license
+- objdump sign-extends LSETUP start/end offsets; they are unsigned
+  (pcrel5m2, lppcrel11m2), as the simulator and the hardware treat them.
+- objdump prints `DBG`/`PRNT`/`DBGAL`/`DBGAH` with reserved register numbers
+  as "Illegal register"; those do not decode here.
 
-See [NOTICE.md](NOTICE.md). In short, the masks and field layouts were checked
-against `0bs3n/arch-blackfin` commit
-`5cd19a58b7790ab18dc5100ef8033254945329af`. Because a material upstream
-opcode header is GPLv2-or-later despite the repository's top-level MIT file,
-this extension is conservatively GPL-2.0-or-later.
+Simulator cases left out of the comparison: encodings it rejects (it is
+stricter than objdump), host-undefined results (register shifts by negative
+counts), its out-of-bounds write for a 32-bit MAC1 result with dst=7, packets
+that write one register twice, and an uninitialised flag in
+`Rd = A1 + A0, Rd = A1 - A0`. Packet writeback of data registers needs the
+simulator's `BFIN_PARALLEL_WRITEBACK=1` switch, which the test sets.
 
-## Compile the SLEIGH language
-
-For the Homebrew Ghidra 11.4.2 installation used by this project:
+## Build and install
 
 ```sh
-GHIDRA_INSTALL_DIR=/opt/homebrew/Caskroom/ghidra/11.4.2-20250826/ghidra_11.4.2_PUBLIC
-JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
-_JAVA_OPTIONS=-Duser.home=/private/tmp/cdj-ghidra-home \
-  PATH=/opt/homebrew/opt/openjdk@21/bin:/usr/bin:/bin \
-  "$GHIDRA_INSTALL_DIR/support/sleigh" data/languages/blackfin.slaspec
+scripts/setup.sh extension
 ```
 
-The compiler writes `data/languages/blackfin.sla`. The `.sla` file is a build
-artifact and should be regenerated rather than reviewed as source.
+compiles `data/languages/blackfin.slaspec` with Ghidra's `support/sleigh`,
+writes a reproducible `build/ghidra_<ver>_PUBLIC_Blackfin.zip` and unpacks it
+into the user's Ghidra Extensions folder. Restart Ghidra afterwards. Programs
+analysed with an earlier build keep the old instruction lengths in their
+listing; re-decode them with `scripts/setup.sh redisassemble` (Ghidra closed).
 
-## Build and install the extension
+## Source layout
 
-```sh
-GHIDRA_INSTALL_DIR=/opt/homebrew/Caskroom/ghidra/11.4.2-20250826/ghidra_11.4.2_PUBLIC
-JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
-GRADLE_USER_HOME=/private/tmp/cdj-gradle-home \
-  "$GHIDRA_INSTALL_DIR/support/gradle/gradlew" \
-  -PGHIDRA_INSTALL_DIR="$GHIDRA_INSTALL_DIR" buildExtension
-```
+| File | Content |
+| --- | --- |
+| `blackfin.slaspec` | registers, context, tokens, register attachments |
+| `bfin_macros.sinc` | ASTAT flag helpers |
+| `bfin_16.sinc` | 16-bit instructions; the parallel-capable ones in `S16` |
+| `bfin_32.sinc` | LSETUP, immediate loads, long jump/call, 16-bit-offset loads/stores, LINK |
+| `bfin_dsp.sinc` | dsp32mac, dsp32mult |
+| `bfin_dspalu.sinc` | dsp32alu |
+| `bfin_dspshift.sinc` | dsp32shift, dsp32shiftimm |
+| `bfin_par.sinc` | multi-issue packets |
+| `bfin_loop.sinc` | root table and hardware-loop back-edges |
 
-Install the generated `dist/ghidra_11.4.2_PUBLIC_*_Blackfin.zip` through
-Ghidra's **File > Install Extensions** dialog, restart Ghidra, and choose
-`Blackfin:LE:32:default` when importing a materialized GUI memory region.
-For `reports/generated/gui-memory/0x00c66e44-0x00fd5557.bin`, set the raw
-binary base address to `0x00c66e44`.
-
-## Smoke test
-
-After installing the extension, import that materialized runtime region at
-base `0x00c66e44`, then run `BlackfinSmokeTest.java`. The script disassembles
-the beginning of the GUI update bank selector at `0x00d09a34` and checks
-direct forward and backward calls, `LINK`, split immediate loads, byte loads,
-condition-code comparisons, conditional/unconditional branches, stack
-push/pop, and `RTS`. It also asserts that both calls have direct flow targets
-in Ghidra. The script prints `BLACKFIN_SMOKE_OK` on success.
-
-The test can also be run headlessly after installing the extension:
-
-```sh
-mkdir -p /private/tmp/cdj-ghidra-project
-_JAVA_OPTIONS=-Duser.home=/private/tmp/cdj-ghidra-home \
-  PATH=/opt/homebrew/opt/openjdk@21/bin:/usr/bin:/bin \
-  "$GHIDRA_INSTALL_DIR/support/analyzeHeadless" \
-  /private/tmp/cdj-ghidra-project blackfin-smoke \
-  -import ../../reports/generated/gui-memory/0x00c66e44-0x00fd5557.bin \
-  -loader BinaryLoader -loader-baseAddr 0x00c66e44 \
-  -processor Blackfin:LE:32:default -cspec default -noanalysis \
-  -scriptPath ghidra_scripts -postScript BlackfinSmokeTest.java -overwrite
-```
-
-Run the corpus regressions with fresh project names (headless Ghidra projects
-are persistent):
-
-```sh
-"$GHIDRA_INSTALL_DIR/support/analyzeHeadless" \
-  /private/tmp/cdj-ghidra-project blackfin-l1-corpus \
-  -import ../../reports/generated/gui-memory/0xffa08000-0xffa08585.bin \
-  -loader BinaryLoader -loader-baseAddr 0xffa08000 \
-  -processor Blackfin:LE:32:default -cspec default -noanalysis \
-  -scriptPath ghidra_scripts -postScript BlackfinCorpusTest.java l1 -overwrite
-
-"$GHIDRA_INSTALL_DIR/support/analyzeHeadless" \
-  /private/tmp/cdj-ghidra-project blackfin-packet-corpus \
-  -import ../../reports/generated/gui-memory/0x00c66e44-0x00fd5557.bin \
-  -loader BinaryLoader -loader-baseAddr 0x00c66e44 \
-  -processor Blackfin:LE:32:default -cspec default -noanalysis \
-  -scriptPath ghidra_scripts -postScript BlackfinCorpusTest.java packet -overwrite
-```
-
-Use `BlackfinCorpusTest.java app` with the application import to reproduce the
-`0x00d00000-0x00d3ffff` coverage row. Use `coverage` with the L1 import to print
-each remaining fallback byte sequence.
-
-GNU binutils remains the reference oracle while the port is incomplete:
-
-```sh
-/opt/homebrew/opt/binutils/bin/objdump -D -b binary -m bfin \
-  --adjust-vma=0x00c66e44 \
-  --start-address=0x00d09a34 --stop-address=0x00d09a82 \
-  ../../reports/generated/gui-memory/0x00c66e44-0x00fd5557.bin
-```
-
-## Comparison with the existing `sualk` extension
-
-[`sualk/ghidra-blackfin`](https://github.com/sualk/ghidra-blackfin) is a more
-complete classic-Blackfin disassembler and successfully decodes the measured
-CDJ corpora. See the project-wide
-[GUI/Blackfin notes](../../docs/firmware/gui/gui-blackfin.md#existing-sualkghidra-blackfin-comparison)
-for exact coverage, packet-representation, loader, and p-code findings.
-
-It has no repository-level license declaration, and its SLEIGH files contain
-no license header. Do not copy its decoder into this GPL-2.0-or-later module
-unless the upstream author provides a compatible explicit license. Keeping
-this implementation independent preserves a redistributable option with
-CDJ-specific corpus regressions.
+Provenance and licence: [NOTICE.md](NOTICE.md).

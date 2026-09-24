@@ -1,0 +1,428 @@
+# dsp32shift / dsp32shiftimm: first word sopcde=(0,4); second word sop=(14,15)
+# HLs=(12,13) dst0=(9,11) src0=(3,5) src1=(0,2), immediate immag=(3,8).
+# Register shift counts are the sign-extended low six bits of the count register.
+
+# ---- operands --------------------------------------------------------------
+
+SDH: xdl9 is x13=0 & xdl9 { export xdl9; }
+SDH: xdh9 is x13=1 & xdh9 { export xdh9; }
+SSH: xdl0 is x12=0 & xdl0 { export xdl0; }
+SSH: xdh0 is x12=1 & xdh0 { export xdh0; }
+
+# Immediate shift magnitudes as the GNU disassembler prints them.
+NEWIMM: val is x3_8 [ val = (64 - x3_8) & 0x3f; ] { export *[const]:1 val; }
+IMM5: val is x3_8 [ val = (x3_8 & 0x1f) - ((x3_8 & 0x10) << 1); ] { export *[const]:1 val; }
+IMM5N: val is x3_8 [ val = ((64 - x3_8) & 0x1f) - (((64 - x3_8) & 0x10) << 1); ] { export *[const]:1 val; }
+IMM6: x3_8s is x3_8s { export *[const]:1 x3_8s; }
+IMMU: x3_8 is x3_8 { export *[const]:1 x3_8; }
+
+# ---- shift helpers ------------------------------------------------------------
+# Results in r; flags returned in z (AZ), n (AN) and o (V). sc: a left shift
+# that changes the sign also sets V (the register-count forms).
+
+# 16-bit arithmetic shift: left by c if c > 0 (optionally saturating), else
+# right by -c. Left shifts overflow when significant bits or the sign change.
+macro ash16(v, c, sat, sc, r, z, n, o) {
+  local left:1 = c s> 0;
+  local rn:1 = -c;
+  local rr:2 = v s>> rn;
+  local wide:8 = zext(v) << c;
+  local lv:2 = wide:2;
+  local ex:8 = wide >> 16;
+  local ones:4 = ~(0xffffffff << c);
+  local vi:1 = ((ex == 0) | ((ex == zext(ones)) & (lv s< 0))) == 0;
+  local st:1 = (sat != 0) & (vi | ((lv s< 0) != (v s< 0)));
+  lv = zext(st == 0) * lv + zext(st) * (0x7fff + zext(v s< 0));
+  r = zext(left) * lv + zext(left == 0) * rr;
+  z = r == 0; n = r s< 0;
+  o = left & (vi | st | ((sc != 0) & ((r s< 0) != (v s< 0))));
+}
+# 32-bit arithmetic shift: left by c if c >= 0, else right by -c.
+macro ash32(v, c, sat, sc, r, z, n, o) {
+  local left:1 = c s>= 0;
+  local rn:1 = -c;
+  local rr:4 = v s>> rn;
+  local wide:8 = zext(v) << c;
+  local lv:4 = wide:4;
+  local ex:8 = wide >> 32;
+  local ones:4 = ~(0xffffffff << c);
+  local vi:1 = ((ex == 0) | ((ex == zext(ones)) & (lv s< 0))) == 0;
+  local st:1 = (sat != 0) & (vi | ((lv s< 0) != (v s< 0)) | ((v s>= 0) & (lv == 0) & (v != 0)));
+  lv = zext(st == 0) * lv + zext(st) * (0x7fffffff + zext(v s< 0));
+  r = zext(left) * lv + zext(left == 0) * rr;
+  z = r == 0; n = r s< 0;
+  o = left & (vi | st | ((sc != 0) & ((r s< 0) != (v s< 0))));
+}
+# 32-bit logical shift: left by c if c >= 0 (V on overflow), else right by -c.
+macro lsh32(v, c, sc, r, z, n, o) {
+  local left:1 = c s>= 0;
+  local rn:1 = -c;
+  local rr:4 = v >> rn;
+  local wide:8 = zext(v) << c;
+  local lv:4 = wide:4;
+  local ex:8 = wide >> 32;
+  local ones:4 = ~(0xffffffff << c);
+  local vi:1 = ((ex == 0) | ((ex == zext(ones)) & (lv s< 0))) == 0;
+  r = zext(left) * lv + zext(left == 0) * rr;
+  z = r == 0; n = r s< 0;
+  o = left & (vi | ((sc != 0) & ((r s< 0) != (v s< 0))));
+}
+# Rotate through CC (33-bit): left by c, negative counts rotate right.
+macro rot32(v, c, r) {
+  local s:1 = c + zext(c s< 0) * 33;
+  local ci:4 = zext(CC);
+  local t:4 = (v << s) | (v >> (33 - s)) | (ci << (s - 1));
+  local nc:1 = ((v >> (32 - s)) & 1) != 0;
+  local k:1 = s == 0;
+  r = zext(k) * v + zext(k == 0) * t;
+  CC = (CC & k) | (nc & (k == 0));
+}
+# Rotate a 40-bit accumulator through CC (41-bit).
+macro rot40(a, c) {
+  local v:8 = zext(a:5);
+  local s:1 = c + zext(c s< 0) * 41;
+  local ci:8 = zext(CC);
+  local t:8 = ((v << s) | (v >> (41 - s)) | (ci << (s - 1))) & 0xffffffffff;
+  local nc:1 = ((v >> (40 - s)) & 1) != 0;
+  local k:1 = s == 0;
+  a = zext(k) * v + zext(k == 0) * t;
+  CC = (CC & k) | (nc & (k == 0));
+}
+macro setv3(o) { V = o; V_COPY = o; VS = VS | o; }
+# Redundant sign bits of a 32- or 16-bit value.
+macro sb32(v, r) { local x:4 = v ^ (v s>> 31); local c:4 = lzcount(x); r = c:2 - 1; }
+macro sb16(v, r) { local x:2 = v ^ (v s>> 15); local c:4 = lzcount(x); r = c:2 - 1; }
+macro xorred(a, b, p) { local t:8 = a & b & 0xffffffffff; local c:4 = popcount(t); p = (c & 1) != 0; }
+
+# ============================================================================
+# dsp32shift (register count)
+# ============================================================================
+
+DSP: SDH "= ASHIFT" SSH "BY" xdl3 is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=0; x14_15=0 & x6_8=0 & SDH & SSH & xdl3) {
+  local c:1 = xdl3:1 << 2; c = c s>> 2;
+  local r:2; local z:1; local n:1; local o:1; ash16(SSH, c, 0:1, 1:1, r, z, n, o);
+  AZ = z; AN = n; setv3(o); SDH = r;
+}
+DSP: SDH "= ASHIFT" SSH "BY" xdl3 "(S)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=0; x14_15=1 & x6_8=0 & SDH & SSH & xdl3) {
+  local c:1 = xdl3:1 << 2; c = c s>> 2;
+  local r:2; local z:1; local n:1; local o:1; ash16(SSH, c, 1:1, 1:1, r, z, n, o);
+  AZ = z; AN = n; setv3(o); SDH = r;
+}
+DSP: SDH "= LSHIFT" SSH "BY" xdl3 is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=0; x14_15=2 & x6_8=0 & SDH & SSH & xdl3) {
+  local c:1 = xdl3:1 << 2; c = c s>> 2;
+  local rn:1 = -c; local v:2 = SSH;
+  local r:2 = zext(c s< 0) * (v >> rn) + zext(c s>= 0) * (v << c);
+  AZ = r == 0; AN = r s< 0; V = 0; V_COPY = 0; SDH = r;
+}
+
+ACC01: "A0" is x12=0 { export A0; }
+ACC01: "A1" is x12=1 { export A1; }
+ACCB: "A0" is x12=0 { }
+ACCB: "A1" is x12=1 { }
+DSP: ACC01 "= ASHIFT" ACCB "BY" xdl3 is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=3; x12 & x14_15=0 & x6_8=0 & ACC01 & ACCB & xdl3) {
+  local c:1 = xdl3:1 << 2; c = c s>> 2;
+  local a:8 = sext(ACC01:5); local rn:1 = -c;
+  local r:8 = zext(c s<= 0) * (a s>> rn) + zext(c s> 0) * (a << c);
+  AN = (r & 0x8000000000) != 0; AZ = r:5 == 0;
+  ACC01 = r; AV0 = AV0 * zext(x12 != 0:1); AV1 = AV1 * zext(x12 == 0:1);
+}
+DSP: ACC01 "= LSHIFT" ACCB "BY" xdl3 is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=3; x12 & x14_15=1 & x6_8=0 & ACC01 & ACCB & xdl3) {
+  local c:1 = xdl3:1 << 2; c = c s>> 2;
+  local a:8 = zext(ACC01:5); local rn:1 = -c;
+  local r:8 = zext(c s<= 0) * (a >> rn) + zext(c s> 0) * (a << c);
+  AN = (r & 0x8000000000) != 0; AZ = r:5 == 0;
+  ACC01 = r; AV0 = AV0 * zext(x12 != 0:1); AV1 = AV1 * zext(x12 == 0:1);
+}
+DSP: ACC01 "= ROT" ACCB "BY" xdl3 is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=3; x14_15=2 & x6_8=0 & ACC01 & ACCB & xdl3) {
+  local c:1 = xdl3:1 << 2; c = c s>> 2;
+  local a:8 = ACC01; rot40(a, c); ACC01 = a;
+}
+DSP: xdr9 "= ROT" xdr0 "BY" xdl3 is (w12_15=0xc & w9_10=3 & w7_8=0 & (w0_4=2 | w0_4=3); x14_15=3 & x6_8=0 & xdr9 & xdr0 & xdl3) {
+  local c:1 = xdl3:1 << 2; c = c s>> 2;
+  local r:4; rot32(xdr0, c, r); xdr9 = r;
+}
+
+# vector (two halves)
+DSP: xdr9 "= ASHIFT" xdr0 "BY" xdl3 "(V)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=1; x14_15=0 & x6_8=0 & xdr9 & xdr0 & xdl3) {
+  local c:1 = xdl3:1 << 2; c = c s>> 2;
+  local rl:2; local rh:2; local z0:1; local n0:1; local o0:1; local z1:1; local n1:1; local o1:1;
+  local vl:2 = xdr0:2; local vh:2 = xdr0(2);
+  ash16(vl, c, 0:1, 1:1, rl, z0, n0, o0); ash16(vh, c, 0:1, 1:1, rh, z1, n1, o1);
+  AZ = z0 | z1; AN = n0 | n1; setv3(o0 | o1);
+  xdr9 = (zext(rh) << 16) | zext(rl);
+}
+DSP: xdr9 "= ASHIFT" xdr0 "BY" xdl3 "(V, S)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=1; x14_15=1 & x6_8=0 & xdr9 & xdr0 & xdl3) {
+  local c:1 = xdl3:1 << 2; c = c s>> 2;
+  local rl:2; local rh:2; local z0:1; local n0:1; local o0:1; local z1:1; local n1:1; local o1:1;
+  local vl:2 = xdr0:2; local vh:2 = xdr0(2);
+  ash16(vl, c, 1:1, 1:1, rl, z0, n0, o0); ash16(vh, c, 1:1, 1:1, rh, z1, n1, o1);
+  AZ = z0 | z1; AN = n0 | n1; setv3(o0 | o1);
+  xdr9 = (zext(rh) << 16) | zext(rl);
+}
+DSP: xdr9 "= LSHIFT" xdr0 "BY" xdl3 "(V)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=1; x14_15=2 & x6_8=0 & xdr9 & xdr0 & xdl3) {
+  local c:1 = xdl3:1 << 2; c = c s>> 2;
+  local rn:1 = -c; local l:2 = xdr0:2; local h:2 = xdr0(2);
+  local rl:2 = zext(c s<= 0) * (l >> rn) + zext(c s> 0) * (l << c);
+  local rh:2 = zext(c s<= 0) * (h >> rn) + zext(c s> 0) * (h << c);
+  AZ = (rl == 0) | (rh == 0); AN = (rl s< 0) | (rh s< 0); V = 0; V_COPY = 0;
+  xdr9 = (zext(rh) << 16) | zext(rl);
+}
+
+# 32-bit
+DSP: xdr9 "= ASHIFT" xdr0 "BY" xdl3 is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=2; x14_15=0 & x6_8=0 & xdr9 & xdr0 & xdl3) {
+  local c:1 = xdl3:1 << 2; c = c s>> 2;
+  local r:4; local z:1; local n:1; local o:1; ash32(xdr0, c, 0:1, 1:1, r, z, n, o);
+  AZ = z; AN = n; setv3(o); xdr9 = r;
+}
+DSP: xdr9 "= ASHIFT" xdr0 "BY" xdl3 "(S)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=2; x14_15=1 & x6_8=0 & xdr9 & xdr0 & xdl3) {
+  local c:1 = xdl3:1 << 2; c = c s>> 2;
+  local r:4; local z:1; local n:1; local o:1; ash32(xdr0, c, 1:1, 1:1, r, z, n, o);
+  AZ = z; AN = n; setv3(o); xdr9 = r;
+}
+DSP: xdr9 "= LSHIFT" xdr0 "BY" xdl3 is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=2; x14_15=2 & x6_8=0 & xdr9 & xdr0 & xdl3) {
+  local c:1 = xdl3:1 << 2; c = c s>> 2;
+  local r:4; local z:1; local n:1; local o:1; lsh32(xdr0, c, 1:1, r, z, n, o);
+  AZ = z; AN = n; setv3(o); xdr9 = r;
+}
+
+# PACK, SIGNBITS, ONES, EXPADJ
+PK1: xdl0 is x15=0 & xdl0 { export xdl0; }
+PK1: xdh0 is x15=1 & xdh0 { export xdh0; }
+PK0: xdl3 is x14=0 & xdl3 { export xdl3; }
+PK0: xdh3 is x14=1 & xdh3 { export xdh3; }
+DSP: xdr9 "= PACK ("^PK1^","^PK0^")" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=4; x6_8=0 & xdr9 & PK1 & PK0) {
+  xdr9 = (zext(PK1) << 16) | zext(PK0);
+}
+DSP: xdl9 "= SIGNBITS" xdr0 is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=5; x14_15=0 & x6_8=0 & xdl9 & xdr0) { local r:2; sb32(xdr0, r); xdl9 = r; }
+DSP: xdl9 "= SIGNBITS" xdl0 is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=5; x14_15=1 & x6_8=0 & xdl9 & xdl0) { local r:2; sb16(xdl0, r); xdl9 = r; }
+DSP: xdl9 "= SIGNBITS" xdh0 is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=5; x14_15=2 & x6_8=0 & xdl9 & xdh0) { local r:2; sb16(xdh0, r); xdl9 = r; }
+DSP: xdl9 "= SIGNBITS A0" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=6; x14_15=0 & x6_8=0 & xdl9) {
+  local a:8 = sext(A0:5); local x:8 = a ^ (a s>> 63); local c:4 = lzcount(x); xdl9 = c:2 - 33;
+}
+DSP: xdl9 "= SIGNBITS A1" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=6; x14_15=1 & x6_8=0 & xdl9) {
+  local a:8 = sext(A1:5); local x:8 = a ^ (a s>> 63); local c:4 = lzcount(x); xdl9 = c:2 - 33;
+}
+DSP: xdl9 "= ONES" xdr0 is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=6; x14_15=3 & x6_8=0 & xdl9 & xdr0) { local c:4 = popcount(xdr0); xdl9 = c:2; }
+DSP: xdl9 "= EXPADJ ("^xdr0^","^xdl3^")" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=7; x14_15=0 & x6_8=0 & xdl9 & xdr0 & xdl3) {
+  local s:2; sb32(xdr0, s); local t:2 = xdl3;
+  xdl9 = zext((s & 0x1f) < (t & 0x1f)) * s + zext((s & 0x1f) >= (t & 0x1f)) * t;
+}
+DSP: xdl9 "= EXPADJ ("^xdr0^","^xdl3^") (V)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=7; x14_15=1 & x6_8=0 & xdl9 & xdr0 & xdl3) {
+  local sh:2; sb16(xdr0(2), sh); local sl:2; sb16(xdr0:2, sl); local t:2 = xdl3;
+  local m:2 = zext((sh & 0xf) < (sl & 0xf)) * sh + zext((sh & 0xf) >= (sl & 0xf)) * sl;
+  xdl9 = zext((m & 0xf) < (t & 0xf)) * m + zext((m & 0xf) >= (t & 0xf)) * t;
+}
+DSP: xdl9 "= EXPADJ ("^xdl0^","^xdl3^")" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=7; x14_15=2 & x6_8=0 & xdl9 & xdl0 & xdl3) {
+  local s:2; sb16(xdl0, s); local t:2 = xdl3;
+  xdl9 = zext((s & 0xf) < (t & 0xf)) * s + zext((s & 0xf) >= (t & 0xf)) * t;
+}
+DSP: xdl9 "= EXPADJ ("^xdh0^","^xdl3^")" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=7; x14_15=3 & x6_8=0 & xdl9 & xdh0 & xdl3) {
+  local s:2; sb16(xdh0, s); local t:2 = xdl3;
+  xdl9 = zext((s & 0xf) < (t & 0xf)) * s + zext((s & 0xf) >= (t & 0xf)) * t;
+}
+
+# BITMUX, VIT_MAX
+DSP: "BITMUX ("^xdr3^","^xdr0^", A0) (ASR)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=8; x14_15=0 & x6_8=0 & xdr3 & xdr0) {
+  local a:8 = zext(A0:5); local s0:4 = xdr3; local s1:4 = xdr0;
+  A0 = (a >> 2) | (zext(s0 & 1) << 38) | (zext(s1 & 1) << 39);
+  xdr3 = s0 >> 1; xdr0 = s1 >> 1;
+}
+DSP: "BITMUX ("^xdr3^","^xdr0^", A0) (ASL)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=8; x14_15=1 & x6_8=0 & xdr3 & xdr0) {
+  local a:8 = zext(A0:5); local s0:4 = xdr3; local s1:4 = xdr0;
+  A0 = ((a << 2) | zext((s0 >> 31) & 1) | zext((s1 >> 30) & 2)) & 0xffffffffff;
+  xdr3 = s0 << 1; xdr0 = s1 << 1;
+}
+DSP: xdl9 "= VIT_MAX ("^xdr0^") (ASL)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=9; x14_15=0 & x6_8=0 & xdl9 & xdr0) {
+  local a:8 = zext(A0:5) << 1; local h:2 = xdr0(2); local l:2 = xdr0:2;
+  local d:4 = sext(h) - sext(l); local up:1 = (d & 0x8000) == 0;
+  A0 = (a | zext(up)) & 0xffffffffff; xdl9 = zext(up) * h + zext(up == 0) * l;
+}
+DSP: xdl9 "= VIT_MAX ("^xdr0^") (ASR)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=9; x14_15=1 & x6_8=0 & xdl9 & xdr0) {
+  local a:8 = (zext(A0:5) & 0xfeffffffff) >> 1; local h:2 = xdr0(2); local l:2 = xdr0:2;
+  local d:4 = sext(h) - sext(l); local up:1 = (d & 0x8000) == 0;
+  A0 = a | zext(up) * 0x80000000; xdl9 = zext(up) * h + zext(up == 0) * l;
+}
+macro vit2(sr, dst, src0, src1) {
+  local s0:4 = src0; local s1:4 = src1;
+  local h0:2 = s0(2); local l0:2 = s0:2; local h1:2 = s1(2); local l1:2 = s1:2;
+  local d0:4 = sext(h0) - sext(l0); local u0:1 = (d0 & 0x8000) == 0;
+  local d1:4 = sext(h1) - sext(l1); local u1:1 = (d1 & 0x8000) == 0;
+  local a:8 = sext(A0:5);
+  a = zext(sr == 0) * (a << 2) + zext(sr != 0) * (a s>> 2);
+  a = a | zext(u0) * (zext(sr == 0) * 2 + zext(sr != 0) * 0x40000000) | zext(u1) * (zext(sr == 0) * 1 + zext(sr != 0) * 0x80000000);
+  A0 = a & 0xffffffffff;
+  local o0:2 = zext(u0) * h0 + zext(u0 == 0) * l0;
+  local o1:2 = zext(u1) * h1 + zext(u1 == 0) * l1;
+  dst = (zext(o1) << 16) | zext(o0);
+}
+DSP: xdr9 "= VIT_MAX ("^xdr0^","^xdr3^") (ASL)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=9; x14_15=2 & x6_8=0 & xdr9 & xdr0 & xdr3) { vit2(0:1, xdr9, xdr3, xdr0); }
+DSP: xdr9 "= VIT_MAX ("^xdr0^","^xdr3^") (ASR)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=9; x14_15=3 & x6_8=0 & xdr9 & xdr0 & xdr3) { vit2(1:1, xdr9, xdr3, xdr0); }
+
+# EXTRACT / DEPOSIT: the control register holds length (bits 0-4), position
+# (bits 8-12) and, for DEPOSIT, the field in its high half.
+DSP: xdr9 "= EXTRACT ("^xdr0^","^xdl3^") (Z)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=10; x14_15=0 & x6_8=0 & xdr9 & xdr0 & xdl3 & xdr3) {
+  local v:4 = xdr3; local mask:4 = (1 << (v & 0x1f)) - 1;
+  local r:4 = (xdr0 >> ((v >> 8) & 0x1f)) & mask;
+  setlogical(r); xdr9 = r;
+}
+DSP: xdr9 "= EXTRACT ("^xdr0^","^xdl3^") (X)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=10; x14_15=1 & x6_8=0 & xdr9 & xdr0 & xdl3 & xdr3) {
+  local v:4 = xdr3; local len:4 = v & 0x1f; local mask:4 = (1 << len) - 1; local sgn:4 = (1 << len) >> 1;
+  local r:4 = (xdr0 >> ((v >> 8) & 0x1f)) & mask;
+  r = r | zext((r & sgn) != 0) * ~mask;
+  setlogical(r); xdr9 = r;
+}
+DSP: xdr9 "= DEPOSIT ("^xdr0^","^xdr3^")" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=10; x14_15=2 & x6_8=0 & xdr9 & xdr0 & xdr3) {
+  local fg:4 = xdr3; local len:4 = fg & 0x1f; local l16:4 = zext(len s> 16) * 16 + zext(len s<= 16) * len;
+  local mask:4 = (1 << l16) - 1; local f:4 = (fg >> 16) & mask; local sh:4 = (fg >> 8) & 0x1f;
+  local r:4 = (xdr0 & ~(mask << sh)) | (f << sh);
+  setlogical(r); xdr9 = r;
+}
+DSP: xdr9 "= DEPOSIT ("^xdr0^","^xdr3^") (X)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=10; x14_15=3 & x6_8=0 & xdr9 & xdr0 & xdr3) {
+  local fg:4 = xdr3; local len:4 = fg & 0x1f; local l16:4 = zext(len s> 16) * 16 + zext(len s<= 16) * len;
+  local f:4 = (fg >> 16) & ((1 << l16) - 1); local sh:4 = (fg >> 8) & 0x1f;
+  local fs:4 = f << (16 - len); local t:2 = fs:2; local fx:4 = sext(t) s>> (16 - len);
+  local r:4 = (xdr0 & ~(0xffffffff << sh)) | (fx << sh);
+  setlogical(r); xdr9 = r;
+}
+
+# BXORSHIFT / BXOR (linear feedback shift register support)
+DSP: xdl9 "= CC = BXORSHIFT (A0," xdr3 ")" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=11; x14_15=0 & x6_8=0 & xdl9 & xdr3) {
+  local a:8 = zext(A0:5) << 1; local p:1; xorred(a, zext(xdr3), p);
+  CC = p; xdl9 = zext(p); A0 = a & 0xffffffffff;
+}
+DSP: xdl9 "= CC = BXOR (A0," xdr3 ")" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=11; x14_15=1 & x6_8=0 & xdl9 & xdr3) {
+  local p:1; xorred(zext(A0:5), zext(xdr3), p); CC = p; xdl9 = zext(p);
+}
+DSP: "A0 = BXORSHIFT (A0, A1, CC)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=12; x14_15=0 & x6_8=0) {
+  local a:8 = zext(A0:5); local p:1; xorred(a, zext(A1:5), p);
+  A0 = ((a << 1) | zext(CC ^ p)) & 0xffffffffff;
+}
+DSP: xdl9 "= CC = BXOR (A0, A1, CC)" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=12; x14_15=1 & x6_8=0 & xdl9) {
+  local p:1; xorred(zext(A0:5), zext(A1:5), p); CC = CC ^ p; xdl9 = zext(CC);
+}
+
+# ALIGN8/16/24
+DSP: xdr9 "= ALIGN8 ("^xdr0^","^xdr3^")" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=13; x14_15=0 & x6_8=0 & xdr9 & xdr0 & xdr3) { xdr9 = (xdr0 << 24) | (xdr3 >> 8); }
+DSP: xdr9 "= ALIGN16 ("^xdr0^","^xdr3^")" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=13; x14_15=1 & x6_8=0 & xdr9 & xdr0 & xdr3) { xdr9 = (xdr0 << 16) | (xdr3 >> 16); }
+DSP: xdr9 "= ALIGN24 ("^xdr0^","^xdr3^")" is (w12_15=0xc & w9_10=3 & w7_8=0 & w0_4=13; x14_15=2 & x6_8=0 & xdr9 & xdr0 & xdr3) { xdr9 = (xdr0 << 8) | (xdr3 >> 24); }
+
+# ============================================================================
+# dsp32shiftimm (immediate count)
+# ============================================================================
+
+# 16-bit halves (sopcde 0)
+DSP: SDH "=" SSH ">>>" NEWIMM is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=0; x14_15=0 & (x3_8=0 | x3_8>=48) & SDH & SSH & NEWIMM) {
+  local r:2; local z:1; local n:1; local o:1; ash16(SSH, -NEWIMM, 0:1, 0:1, r, z, n, o);
+  AZ = z; AN = n; setv3(o); SDH = r;
+}
+DSP: SDH "=" SSH ">>>" NEWIMM is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=0; x14_15=0 & x3_8>0 & x3_8<48 & SDH & SSH & NEWIMM) {
+  local c:1 = 16 - (NEWIMM & 0xf);
+  local r:2; local z:1; local n:1; local o:1; ash16(SSH, c, 0:1, 1:1, r, z, n, o);
+  AZ = z; AN = n; setv3(o); SDH = r;
+}
+DSP: SDH "=" SSH "<<" IMMU "(S)" is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=0; x14_15=1 & x8=0 & SDH & SSH & IMMU) {
+  local r:2; local z:1; local n:1; local o:1; ash16(SSH, IMMU, 1:1, 0:1, r, z, n, o);
+  AZ = z; AN = n; setv3(o); SDH = r;
+}
+DSP: SDH "=" SSH ">>>" NEWIMM "(S)" is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=0; x14_15=1 & x8=1 & x3_8>=48 & SDH & SSH & NEWIMM) {
+  local r:2; local z:1; local n:1; local o:1; ash16(SSH, -NEWIMM, 0:1, 0:1, r, z, n, o);
+  AZ = z; AN = n; setv3(o); SDH = r;
+}
+DSP: SDH "=" SSH ">>>" NEWIMM "(S)" is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=0; x14_15=1 & x8=1 & x3_8<48 & SDH & SSH & NEWIMM) {
+  local in:2 = SSH; local c:1 = 32 - NEWIMM; local t:2 = in << c;
+  local st:1 = (t s< 0) != (in s< 0);
+  local r:2 = zext(st) * (0x7fff + zext(in s< 0)) + zext(st == 0) * t;
+  setv3(st); AZ = r == 0; AN = r s< 0; SDH = r;
+}
+DSP: SDH "=" SSH ">>" NEWIMM is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=0; x14_15=2 & x8=1 & SDH & SSH & NEWIMM) {
+  local r:2 = SSH >> NEWIMM; AZ = r == 0; AN = r s< 0; V = 0; V_COPY = 0; SDH = r;
+}
+DSP: SDH "=" SSH "<<" IMMU is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=0; x14_15=2 & x8=0 & SDH & SSH & IMMU) {
+  local v:2 = SSH; local wide:8 = zext(v) << IMMU; local r:2 = wide:2; local ex:8 = wide >> 16;
+  local ones:4 = ~(0xffffffff << IMMU);
+  local vi:1 = ((ex == 0) | ((ex == zext(ones)) & (r s< 0))) == 0;
+  AZ = r == 0; AN = r s< 0; setv3(vi); SDH = r;
+}
+
+# accumulators (sopcde 3)
+DSP: "A0 = ROT A0 BY" IMM6 is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=3; x14_15=2 & x12_13=0 & IMM6) { local a:8 = A0; rot40(a, IMM6); A0 = a; }
+DSP: "A1 = ROT A1 BY" IMM6 is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=3; x14_15=2 & x12_13=1 & IMM6) { local a:8 = A1; rot40(a, IMM6); A1 = a; }
+DSP: "A0 = A0 <<" IMMU is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=3; x14_15=0 & x12_13=0 & x8=0 & IMMU) {
+  local a:8 = (zext(A0:5) << IMMU) & 0xffffffffff; A0 = a; AV0 = 0; AN = (a & 0x8000000000) != 0; AZ = a == 0;
+}
+DSP: "A1 = A1 <<" IMMU is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=3; x14_15=0 & x12_13=1 & x8=0 & IMMU) {
+  local a:8 = (zext(A1:5) << IMMU) & 0xffffffffff; A1 = a; AV1 = 0; AN = (a & 0x8000000000) != 0; AZ = a == 0;
+}
+DSP: "A0 = A0 >>>" NEWIMM is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=3; x14_15=0 & x12_13=0 & x8=1 & NEWIMM) {
+  local a:8 = sext(A0:5) s>> NEWIMM; A0 = a; AV0 = 0; AN = a s< 0; AZ = a == 0;
+}
+DSP: "A1 = A1 >>>" NEWIMM is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=3; x14_15=0 & x12_13=1 & x8=1 & NEWIMM) {
+  local a:8 = sext(A1:5) s>> NEWIMM; A1 = a; AV1 = 0; AN = a s< 0; AZ = a == 0;
+}
+DSP: "A0 = A0 >>" NEWIMM is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=3; x14_15=1 & x12_13=0 & NEWIMM) {
+  local v:8 = zext(A0:5); local n:1 = NEWIMM;
+  local a:8 = (zext(n <= 32) * (v >> n) + zext(n > 32) * (v << (32 - (n & 0x1f)))) & 0xffffffffff;
+  A0 = a; AV0 = 0; AN = (a & 0x8000000000) != 0; AZ = a == 0;
+}
+DSP: "A1 = A1 >>" NEWIMM is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=3; x14_15=1 & x12_13=1 & NEWIMM) {
+  local v:8 = zext(A1:5); local n:1 = NEWIMM;
+  local a:8 = (zext(n <= 32) * (v >> n) + zext(n > 32) * (v << (32 - (n & 0x1f)))) & 0xffffffffff;
+  A1 = a; AV1 = 0; AN = (a & 0x8000000000) != 0; AZ = a == 0;
+}
+
+# vector (sopcde 1)
+macro vash16(c, sat, sc, src, dst) {
+  local rl:2; local rh:2; local z0:1; local n0:1; local o0:1; local z1:1; local n1:1; local o1:1;
+  local vl:2 = src:2; local vh:2 = src(2);
+  ash16(vl, c, sat, sc, rl, z0, n0, o0); ash16(vh, c, sat, sc, rh, z1, n1, o1);
+  AZ = z0 | z1; AN = n0 | n1; setv3(o0 | o1);
+  dst = (zext(rh) << 16) | zext(rl);
+}
+DSP: xdr9 "=" xdr0 "<<" IMMU "(V, S)" is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=1; x14_15=1 & x8=0 & xdr9 & xdr0 & IMMU & IMM5) { vash16(IMM5, 1:1, 0:1, xdr0, xdr9); }
+DSP: xdr9 "=" xdr0 ">>>" IMM5N "(V, S)" is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=1; x14_15=1 & x8=1 & xdr9 & xdr0 & IMM5N & NEWIMM) {
+  local c:1 = zext(NEWIMM > 16) * (16 - (NEWIMM & 0xf)) + zext(NEWIMM <= 16) * -NEWIMM;
+  vash16(c, 0:1, 1:1, xdr0, xdr9);
+}
+DSP: xdr9 "=" xdr0 ">>>" NEWIMM "(V)" is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=1; x14_15=0 & xdr9 & xdr0 & NEWIMM) {
+  local c:1 = zext(NEWIMM > 16) * (16 - (NEWIMM & 0xf)) + zext(NEWIMM <= 16) * -NEWIMM;
+  vash16(c, 0:1, 1:1, xdr0, xdr9);
+}
+DSP: xdr9 "=" xdr0 ">>" NEWIMM "(V)" is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=1; x14_15=2 & x8=1 & xdr9 & xdr0 & NEWIMM & IMM5N) {
+  local n:1 = IMM5N; local lo:2 = xdr0:2; local hi:2 = xdr0(2); local rl:2 = lo >> n; local rh:2 = hi >> n;
+  AZ = (rl == 0) | (rh == 0); AN = (rl s< 0) | (rh s< 0); V = 0; V_COPY = 0;
+  xdr9 = (zext(rh) << 16) | zext(rl);
+}
+DSP: xdr9 "=" xdr0 "<<" IMM5 "(V)" is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=1; x14_15=2 & x8=0 & xdr9 & xdr0 & IMM5) {
+  local l:2 = xdr0:2; local h:2 = xdr0(2);
+  local wl:8 = zext(l) << IMM5; local wh:8 = zext(h) << IMM5;
+  local rl:2 = wl:2; local rh:2 = wh:2; local m4:4 = ~(0xffffffff << IMM5); local ones:8 = zext(m4);
+  local el:8 = wl >> 16; local eh:8 = wh >> 16;
+  local vl:1 = ((el == 0) | ((el == ones) & (rl s< 0))) == 0;
+  local vh:1 = ((eh == 0) | ((eh == ones) & (rh s< 0))) == 0;
+  AZ = (rl == 0) | (rh == 0); AN = (rl s< 0) | (rh s< 0); setv3(vl | vh);
+  xdr9 = (zext(rh) << 16) | zext(rl);
+}
+
+# 32-bit (sopcde 2)
+DSP: xdr9 "=" xdr0 ">>>" NEWIMM is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=2; x14_15=0 & xdr9 & xdr0 & NEWIMM) {
+  local c:1 = NEWIMM << 2; c = c s>> 2;
+  local r:4; local z:1; local n:1; local o:1; ash32(xdr0, -c, 0:1, 0:1, r, z, n, o);
+  AZ = z; AN = n; setv3(o); xdr9 = r;
+}
+DSP: xdr9 "=" xdr0 "<<" IMMU "(S)" is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=2; x14_15=1 & xdr9 & xdr0 & IMMU & IMM6) {
+  local r:4; local z:1; local n:1; local o:1; ash32(xdr0, IMM6, 1:1, 0:1, r, z, n, o);
+  AZ = z; AN = n; setv3(o); xdr9 = r;
+}
+DSP: xdr9 "=" xdr0 ">>" NEWIMM is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=2; x14_15=2 & x8=1 & xdr9 & xdr0 & NEWIMM) {
+  local c:1 = NEWIMM << 2; c = c s>> 2;
+  local r:4; local z:1; local n:1; local o:1; lsh32(xdr0, -c, 0:1, r, z, n, o);
+  AZ = z; AN = n; setv3(o); xdr9 = r;
+}
+DSP: xdr9 "=" xdr0 "<<" IMMU is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=2; x14_15=2 & x8=0 & xdr9 & xdr0 & IMMU & NEWIMM) {
+  local c:1 = NEWIMM << 2; c = c s>> 2;
+  local r:4; local z:1; local n:1; local o:1; lsh32(xdr0, -c, 0:1, r, z, n, o);
+  AZ = z; AN = n; setv3(o); xdr9 = r;
+}
+DSP: xdr9 "= ROT" xdr0 "BY" IMM6 is (w12_15=0xc & w9_10=3 & w7_8=1 & w0_4=2; x14_15=3 & xdr9 & xdr0 & IMM6) {
+  local r:4; rot32(xdr0, IMM6, r); xdr9 = r;
+}

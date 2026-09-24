@@ -1,0 +1,334 @@
+# DSP32 instructions: dsp32mac, dsp32mult, dsp32alu, dsp32shift, dsp32shiftimm.
+# Bit 11 of the first word (M) marks the first operation of a multi-issue packet
+# and is ignored here. The DSP subtable is used by bfin_par.sinc.
+#
+# First word: mac/mult  op1=(0,1) w1=2 P=3 MM=4 mmod=(5,8)
+#             alu       aopcde=(0,4) HL=5
+#             shift     sopcde=(0,4)
+# Second word: mac/mult src1=(0,2) src0=(3,5) dst=(6,8) h10=9 h00=10 op0=(11,12) w0=13 h11=14 h01=15
+#             alu       src1=(0,2) src0=(3,5) dst1=(6,8) dst0=(9,11) x=12 s=13 aop=(14,15)
+#             shift     src1=(0,2) src0=(3,5) dst0=(9,11) HLs=(12,13) sop=(14,15), immag=(3,8)
+
+DSP: "MNOP" is w12_15=0xc & w0_10=0x003; x0_15=0x1800 { }
+
+# ============================================================================
+# Multiply / multiply-accumulate
+# ============================================================================
+# mmod: 0 default (signed fraction), 1 S2RND, 2 T, 3 W32, 4 FU, 6 TFU, 8 IS,
+# 9 ISS2, 11 IH, 12 IU. MM (mixed mode) applies to MAC1 only. Each MAC side
+# works in its own scratch registers (suffix 1 or 0); destination registers are
+# written after both sides have read their operands.
+
+macro sat_s32(v, r, o) {
+  local lo:1 = v s< -0x80000000;
+  local hi:1 = v s> 0x7fffffff;
+  local tv:4 = v:4;
+  r = zext(lo) * 0x80000000 + zext(hi) * 0x7fffffff + zext((lo | hi) == 0) * tv;
+  o = o | lo | hi;
+}
+macro sat_u32(v, r, o) {
+  local hi:1 = v > 0xffffffff;
+  local tv:4 = v:4;
+  r = zext(hi) * 0xffffffff + zext(hi == 0) * tv;
+  o = o | hi;
+}
+macro sat_s16(v, r, o) {
+  local lo:1 = v s< -0x8000;
+  local hi:1 = v s> 0x7fff;
+  local tv:2 = v:2;
+  r = zext(lo) * 0x8000 + zext(hi) * 0x7fff + zext((lo | hi) == 0) * zext(tv);
+  o = o | lo | hi;
+}
+macro sat_u16(v, r, o) {
+  local hi:1 = v > 0xffff;
+  local tv:2 = v:2;
+  r = zext(hi) * 0xffff + zext(hi == 0) * zext(tv);
+  o = o | hi;
+}
+# Round to nearest even at bit 16, then drop the low half (arithmetic shift).
+macro rnd16(v) {
+  local f:8 = v & 0xffff;
+  local up:1 = (f > 0x8000) | ((f == 0x8000) & ((v & 0x10000) != 0));
+  v = (v + zext(up) * 0x8000) s>> 16;
+}
+macro x_rs16(v, r, o) { local x:8 = v; rnd16(x); sat_s16(x, r, o); }
+macro x_ru16(v, r, o) { local x:8 = v; rnd16(x); sat_u16(x, r, o); }
+macro x_ts16(v, r, o) { local x:8 = v s>> 16; sat_s16(x, r, o); }
+macro x_tu16(v, r, o) { local x:8 = v s>> 16; sat_u16(x, r, o); }
+macro x_s2rnd16(v, r, o) { local x:8 = v << 1; rnd16(x); sat_s16(x, r, o); }
+macro x_iss2_16(v, r, o) { local x:8 = v << 1; sat_s16(x, r, o); }
+macro x_2s32(v, r, o) { local x:8 = v << 1; sat_s32(x, r, o); }
+
+# Fractional product: (a * b) << 1; 0x8000 * 0x8000 saturates to satv.
+macro mulfrac(a, b, p, s, satv) {
+  local q:4 = sext(a) * sext(b);
+  s = q == 0x40000000;
+  local sh:4 = q << 1;
+  p = sext(sh) * zext(s == 0) + zext(s) * satv;
+}
+
+# 40-bit accumulator saturation of the accumulated value v, flag s.
+macro sat40s(v, s) {
+  local lo:1 = v s< -0x8000000000;
+  local hi:1 = v s> 0x7fffffffff;
+  v = zext((lo | hi) == 0) * v + zext(lo) * 0xffffff8000000000 + zext(hi) * 0x7fffffffff;
+  s = lo | hi;
+}
+macro sat40u(v, s) {
+  local lo:1 = v s< 0;
+  local hi:1 = v s> 0xffffffffff;
+  v = zext((lo | hi) == 0) * v + zext(hi) * 0xffffffffff;
+  s = lo | hi;
+}
+macro satiu(v, s) {
+  local lo:1 = v s< 0;
+  local hi:1 = v s> 0xffffffffff;
+  v = zext((lo | hi) == 0) * v + zext(hi) * 0xffffffffff;
+  v = sext(v:5);
+  s = lo | hi;
+}
+macro sat32s(v, s) {
+  local lo:1 = v s< -0x80000000;
+  local hi:1 = v s> 0x7fffffff;
+  v = zext((lo | hi) == 0) * v + zext(lo) * 0xffffffff80000000 + zext(hi) * 0x7fffffff;
+  s = lo | hi;
+}
+# W32: keep a 32-bit signed result; the saturation direction follows the sign
+# the accumulator had before the operation (g).
+macro satw32(v, s, g, ps) {
+  local in32:1 = (v s>= -0x80000000) & (v s<= 0x7fffffff);
+  local t:4 = v:4;
+  t = zext(in32) * t + zext(in32 == 0) * (zext(g != 0) * 0x80000000 + zext(g == 0) * 0x7fffffff);
+  v = sext(t);
+  s = (in32 == 0) | ps;
+}
+
+# ---- per-mode building blocks, MAC1 side (MM in bit 4) ----
+PROD1: is w4=0 & (w5_8=0 | w5_8=1 | w5_8=2) { mulfrac(MA1, MB1, PR1, PSAT1, 0x80000000); }
+PROD1: is w4=0 & w5_8=3 { mulfrac(MA1, MB1, PR1, PSAT1, 0x7fffffff); }
+PROD1: is w4=0 & (w5_8=8 | w5_8=9 | w5_8=11) { PR1 = sext(MA1) * sext(MB1); PSAT1 = 0; }
+PROD1: is w4=0 & (w5_8=4 | w5_8=6 | w5_8=12) { PR1 = zext(MA1) * zext(MB1); PSAT1 = 0; }
+PROD1: is w4=1 { PR1 = sext(MA1) * zext(MB1); PSAT1 = 0; }
+
+ACCR1: is w4=0 & (w5_8=4 | w5_8=6 | w5_8=12) { ACC1 = zext(A1:5); SGN1 = (A1.X & 0x80) != 0; }
+ACCR1: is w4=0 & (w5_8=0 | w5_8=1 | w5_8=2 | w5_8=3 | w5_8=8 | w5_8=9 | w5_8=11) { ACC1 = sext(A1:5); SGN1 = (A1.X & 0x80) != 0; }
+ACCR1: is w4=1 { ACC1 = sext(A1:5); SGN1 = (A1.X & 0x80) != 0; }
+
+SAT1: is w5_8=0 | w5_8=1 | w5_8=2 | w5_8=8 | w5_8=9 { sat40s(ACC1, ASAT1); }
+SAT1: is w4=1 & (w5_8=4 | w5_8=6) { sat40s(ACC1, ASAT1); }
+SAT1: is w4=0 & (w5_8=4 | w5_8=6) { sat40u(ACC1, ASAT1); }
+SAT1: is w4=1 & w5_8=12 { ACC1 = sext(ACC1:5); ASAT1 = 0; }
+SAT1: is w4=0 & w5_8=12 { satiu(ACC1, ASAT1); }
+SAT1: is w5_8=11 { sat32s(ACC1, ASAT1); }
+SAT1: is w5_8=3 { satw32(ACC1, ASAT1, SGN1, PSAT1); }
+
+# Extraction to the destination (P selects 32-bit; W32 results cannot be
+# written); OVF from saturation, also
+# of the unsaturated accumulator when the accumulator itself saturated.
+EXT1: is w3=0 & (w5_8=0 | w5_8=11) { local d:4 = 0; local o:1 = 0; x_rs16(ACN1, d, o); OVF1 = o & ASAT1; x_rs16(ACC1, RES1, OVF1); }
+EXT1: is w3=0 & w4=1 & w5_8=4 { local d:4 = 0; local o:1 = 0; x_rs16(ACN1, d, o); OVF1 = o & ASAT1; x_rs16(ACC1, RES1, OVF1); }
+EXT1: is w3=0 & w4=0 & w5_8=4 { local d:4 = 0; local o:1 = 0; x_ru16(ACN1, d, o); OVF1 = o & ASAT1; x_ru16(ACC1, RES1, OVF1); }
+EXT1: is w3=0 & w5_8=8 { local d:4 = 0; local o:1 = 0; sat_s16(ACN1, d, o); OVF1 = o & ASAT1; sat_s16(ACC1, RES1, OVF1); }
+EXT1: is w3=0 & w4=1 & w5_8=12 { local d:4 = 0; local o:1 = 0; sat_s16(ACN1, d, o); OVF1 = o & ASAT1; sat_s16(ACC1, RES1, OVF1); }
+EXT1: is w3=0 & w4=0 & w5_8=12 { local d:4 = 0; local o:1 = 0; sat_u16(ACN1, d, o); OVF1 = o & ASAT1; sat_u16(ACC1, RES1, OVF1); }
+EXT1: is w3=0 & w5_8=2 { local d:4 = 0; local o:1 = 0; x_ts16(ACN1, d, o); OVF1 = o & ASAT1; x_ts16(ACC1, RES1, OVF1); }
+EXT1: is w3=0 & w4=1 & w5_8=6 { local d:4 = 0; local o:1 = 0; x_ts16(ACN1, d, o); OVF1 = o & ASAT1; x_ts16(ACC1, RES1, OVF1); }
+EXT1: is w3=0 & w4=0 & w5_8=6 { local d:4 = 0; local o:1 = 0; x_tu16(ACN1, d, o); OVF1 = o & ASAT1; x_tu16(ACC1, RES1, OVF1); }
+EXT1: is w3=0 & w5_8=1 { local d:4 = 0; local o:1 = 0; x_s2rnd16(ACN1, d, o); OVF1 = o & ASAT1; x_s2rnd16(ACC1, RES1, OVF1); }
+EXT1: is w3=0 & w5_8=9 { local d:4 = 0; local o:1 = 0; x_iss2_16(ACN1, d, o); OVF1 = o & ASAT1; x_iss2_16(ACC1, RES1, OVF1); }
+EXT1: is w3=1 & (w5_8=0 | w5_8=8) { OVF1 = ASAT1; sat_s32(ACC1, RES1, OVF1); }
+EXT1: is w3=1 & w4=1 & (w5_8=4 | w5_8=12) { OVF1 = ASAT1; sat_s32(ACC1, RES1, OVF1); }
+EXT1: is w3=1 & w4=0 & (w5_8=4 | w5_8=12) { OVF1 = ASAT1; sat_u32(ACC1, RES1, OVF1); }
+EXT1: is w3=1 & (w5_8=1 | w5_8=9) { OVF1 = ASAT1; x_2s32(ACC1, RES1, OVF1); }
+
+# ---- MAC0 side (never mixed mode) ----
+PROD0: is w5_8=0 | w5_8=1 | w5_8=2 { mulfrac(MA0, MB0, PR0, PSAT0, 0x80000000); }
+PROD0: is w5_8=3 { mulfrac(MA0, MB0, PR0, PSAT0, 0x7fffffff); }
+PROD0: is w5_8=8 | w5_8=9 | w5_8=11 { PR0 = sext(MA0) * sext(MB0); PSAT0 = 0; }
+PROD0: is w5_8=4 | w5_8=6 | w5_8=12 { PR0 = zext(MA0) * zext(MB0); PSAT0 = 0; }
+
+ACCR0: is w5_8=4 | w5_8=6 | w5_8=12 { ACC0 = zext(A0:5); SGN0 = (A0.X & 0x80) != 0; }
+ACCR0: is w5_8=0 | w5_8=1 | w5_8=2 | w5_8=3 | w5_8=8 | w5_8=9 | w5_8=11 { ACC0 = sext(A0:5); SGN0 = (A0.X & 0x80) != 0; }
+
+SAT0: is w5_8=0 | w5_8=1 | w5_8=2 | w5_8=8 | w5_8=9 { sat40s(ACC0, ASAT0); }
+SAT0: is w5_8=4 | w5_8=6 { sat40u(ACC0, ASAT0); }
+SAT0: is w5_8=12 { satiu(ACC0, ASAT0); }
+SAT0: is w5_8=11 { sat32s(ACC0, ASAT0); }
+SAT0: is w5_8=3 { satw32(ACC0, ASAT0, SGN0, PSAT0); }
+
+EXT0: is w3=0 & (w5_8=0 | w5_8=11) { local d:4 = 0; local o:1 = 0; x_rs16(ACN0, d, o); OVF0 = o & ASAT0; x_rs16(ACC0, RES0, OVF0); }
+EXT0: is w3=0 & w5_8=4 { local d:4 = 0; local o:1 = 0; x_ru16(ACN0, d, o); OVF0 = o & ASAT0; x_ru16(ACC0, RES0, OVF0); }
+EXT0: is w3=0 & w5_8=8 { local d:4 = 0; local o:1 = 0; sat_s16(ACN0, d, o); OVF0 = o & ASAT0; sat_s16(ACC0, RES0, OVF0); }
+EXT0: is w3=0 & w5_8=12 { local d:4 = 0; local o:1 = 0; sat_u16(ACN0, d, o); OVF0 = o & ASAT0; sat_u16(ACC0, RES0, OVF0); }
+EXT0: is w3=0 & w5_8=2 { local d:4 = 0; local o:1 = 0; x_ts16(ACN0, d, o); OVF0 = o & ASAT0; x_ts16(ACC0, RES0, OVF0); }
+EXT0: is w3=0 & w5_8=6 { local d:4 = 0; local o:1 = 0; x_tu16(ACN0, d, o); OVF0 = o & ASAT0; x_tu16(ACC0, RES0, OVF0); }
+EXT0: is w3=0 & w5_8=1 { local d:4 = 0; local o:1 = 0; x_s2rnd16(ACN0, d, o); OVF0 = o & ASAT0; x_s2rnd16(ACC0, RES0, OVF0); }
+EXT0: is w3=0 & w5_8=9 { local d:4 = 0; local o:1 = 0; x_iss2_16(ACN0, d, o); OVF0 = o & ASAT0; x_iss2_16(ACC0, RES0, OVF0); }
+EXT0: is w3=1 & (w5_8=0 | w5_8=8) { OVF0 = ASAT0; sat_s32(ACC0, RES0, OVF0); }
+EXT0: is w3=1 & (w5_8=4 | w5_8=12) { OVF0 = ASAT0; sat_u32(ACC0, RES0, OVF0); }
+EXT0: is w3=1 & (w5_8=1 | w5_8=9) { OVF0 = ASAT0; x_2s32(ACC0, RES0, OVF0); }
+
+# ---- operands and display pieces ----
+M1A: xdl3 is x15=0 & xdl3 { export xdl3; }
+M1A: xdh3 is x15=1 & xdh3 { export xdh3; }
+M1B: xdl0 is x14=0 & xdl0 { export xdl0; }
+M1B: xdh0 is x14=1 & xdh0 { export xdh0; }
+M0A: xdl3 is x10=0 & xdl3 { export xdl3; }
+M0A: xdh3 is x10=1 & xdh3 { export xdh3; }
+M0B: xdl0 is x9=0 & xdl0 { export xdl0; }
+M0B: xdh0 is x9=1 & xdh0 { export xdh0; }
+
+OP1: "=" is w0_1=0 { ACC1 = PR1; }
+OP1: "+=" is w0_1=1 { ACC1 = ACC1 + PR1; }
+OP1: "-=" is w0_1=2 { ACC1 = ACC1 - PR1; }
+OP0: "=" is x11_12=0 { ACC0 = PR0; }
+OP0: "+=" is x11_12=1 { ACC0 = ACC0 + PR0; }
+OP0: "-=" is x11_12=2 { ACC0 = ACC0 - PR0; }
+
+# R(dst+1), the MAC1 destination of a 32-bit (P) result.
+DP1: "R1" is x6_8=0 { export R1; }
+DP1: "R2" is x6_8=1 { export R2; }
+DP1: "R3" is x6_8=2 { export R3; }
+DP1: "R4" is x6_8=3 { export R4; }
+DP1: "R5" is x6_8=4 { export R5; }
+DP1: "R6" is x6_8=5 { export R6; }
+DP1: "R7" is x6_8=6 { export R7; }
+DP1: "R0" is x6_8=7 { export R0; }
+
+D1: xdh6 is w3=0; xdh6 { }
+D1: DP1 is w3=1; DP1 { }
+D0: xdl6 is w3=0; xdl6 { }
+D0: xdr6 is w3=1; xdr6 { }
+
+MODE: "S2RND" is w5_8=1 { }
+MODE: "T" is w5_8=2 { }
+MODE: "W32" is w5_8=3 { }
+MODE: "FU" is w5_8=4 { }
+MODE: "TFU" is w5_8=6 { }
+MODE: "IS" is w5_8=8 { }
+MODE: "ISS2" is w5_8=9 { }
+MODE: "IH" is w5_8=11 { }
+MODE: "IU" is w5_8=12 { }
+
+# ---- dsp32mac ----
+# "(M)" follows MAC1 when MAC0 is also present, otherwise it joins the mode.
+SEP1: "(M)," is w4=1; x13=1 { }
+SEP1: "(M)," is w4=1; x13=0 & x11_12!=3 { }
+SEP1: "," is w4=0; x13=1 { }
+SEP1: "," is w4=0; x13=0 & x11_12!=3 { }
+SEP1: is op; x13=0 & x11_12=3 { }
+
+OPTM: is w4=0 & w5_8=0; x0_15 { }
+OPTM: is w4=1 & w5_8=0; x13=1 { }
+OPTM: is w4=1 & w5_8=0; x13=0 & x11_12!=3 { }
+OPTM: "(M)" is w4=1 & w5_8=0; x13=0 & x11_12=3 { }
+OPTM: "("^MODE^")" is w4=0 & w5_8!=0 & MODE; x0_15 { }
+OPTM: "("^MODE^")" is w4=1 & w5_8!=0 & MODE; x13=1 { }
+OPTM: "("^MODE^")" is w4=1 & w5_8!=0 & MODE; x13=0 & x11_12!=3 { }
+OPTM: "(M,"^MODE^")" is w4=1 & w5_8!=0 & MODE; x13=0 & x11_12=3 { }
+
+MAC1: is w0_1=3 & w2=0 & w4=0; x0_15 { OVF1 = 0; RES1 = 0; }
+MAC1: D1 "= A1" SEP1 is (w0_1=3 & w2=1 & w4=0 & ACCR1 & EXT1; x0_15) & D1 & SEP1 {
+  build ACCR1; ACN1 = ACC1; ASAT1 = 0; build EXT1;
+}
+MAC1: D1 "= (A1" OP1 M1A "*" M1B ")" SEP1 is (w0_1!=3 & w2=1 & OP1 & ACCR1 & PROD1 & SAT1 & EXT1; M1A & M1B) & D1 & SEP1 {
+  MA1 = M1A; MB1 = M1B;
+  build ACCR1; build PROD1; build OP1; ACN1 = ACC1; build SAT1;
+  A1 = ACC1; AV1 = ASAT1; AV1S = AV1S | ASAT1;
+  build EXT1;
+}
+MAC1: "A1" OP1 M1A "*" M1B SEP1 is (w0_1!=3 & w2=0 & OP1 & ACCR1 & PROD1 & SAT1; M1A & M1B) & SEP1 {
+  MA1 = M1A; MB1 = M1B;
+  build ACCR1; build PROD1; build OP1; ACN1 = ACC1; build SAT1;
+  A1 = ACC1; AV1 = ASAT1; AV1S = AV1S | ASAT1;
+  OVF1 = 0; RES1 = 0;
+}
+
+MAC0: is (w0_1!=3 | w2=1); x13=0 & x11_12=3 { OVF0 = 0; RES0 = 0; }
+MAC0: D0 "= A0" is (ACCR0 & EXT0; x13=1 & x11_12=3) & D0 {
+  build ACCR0; ACN0 = ACC0; ASAT0 = 0; build EXT0;
+}
+MAC0: D0 "= (A0" OP0 M0A "*" M0B ")" is (ACCR0 & PROD0 & SAT0 & EXT0; x13=1 & x11_12!=3 & OP0 & M0A & M0B) & D0 {
+  MA0 = M0A; MB0 = M0B;
+  build ACCR0; build PROD0; build OP0; ACN0 = ACC0; build SAT0;
+  A0 = ACC0; AV0 = ASAT0; AV0S = AV0S | ASAT0;
+  build EXT0;
+}
+MAC0: "A0" OP0 M0A "*" M0B is (ACCR0 & PROD0 & SAT0; x13=0 & x11_12!=3 & OP0 & M0A & M0B) {
+  MA0 = M0A; MB0 = M0B;
+  build ACCR0; build PROD0; build OP0; ACN0 = ACC0; build SAT0;
+  A0 = ACC0; AV0 = ASAT0; AV0S = AV0S | ASAT0;
+  OVF0 = 0; RES0 = 0;
+}
+
+# Destination writes plus the V/AZ/AN contributions of each side.
+W1: is w2=0; x0_15 { VV1 = 0; ZZ1 = 0; NN1 = 0; }
+W1: is w2=1 & w3=0 & w0_1!=3; xdh6 { xdh6 = RES1:2; VV1 = OVF1; ZZ1 = 0; NN1 = 0; }
+W1: is w2=1 & w3=0 & w0_1=3; xdh6 { local r:2 = RES1:2; xdh6 = r; VV1 = OVF1; ZZ1 = r == 0; NN1 = r s< 0; }
+W1: is w2=1 & w3=1 & w0_1!=3; DP1 { DP1 = RES1; VV1 = OVF1; ZZ1 = 0; NN1 = 0; }
+W1: is w2=1 & w3=1 & w0_1=3; DP1 { DP1 = RES1; VV1 = OVF1; ZZ1 = RES1 == 0; NN1 = RES1 s< 0; }
+W0: is op; x13=0 { VV0 = 0; ZZ0 = 0; NN0 = 0; }
+W0: is w3=0; x13=1 & x11_12!=3 & xdl6 { xdl6 = RES0:2; VV0 = OVF0; ZZ0 = 0; NN0 = 0; }
+W0: is w3=0; x13=1 & x11_12=3 & xdl6 { local r:2 = RES0:2; xdl6 = r; VV0 = OVF0; ZZ0 = r == 0; NN0 = r s< 0; }
+W0: is w3=1; x13=1 & x11_12!=3 & xdr6 { xdr6 = RES0; VV0 = OVF0; ZZ0 = 0; NN0 = 0; }
+W0: is w3=1; x13=1 & x11_12=3 & xdr6 { xdr6 = RES0; VV0 = OVF0; ZZ0 = RES0 == 0; NN0 = RES0 s< 0; }
+
+# V is updated when a result is written (or P is set); AZ/AN only by "= Ax" moves.
+MFV: is w3=1; x0_15 { V = VV1 | VV0; V_COPY = V; VS = VS | V; }
+MFV: is w3=0 & w2=1; x0_15 { V = VV1 | VV0; V_COPY = V; VS = VS | V; }
+MFV: is w3=0 & w2=0; x13=1 { V = VV1 | VV0; V_COPY = V; VS = VS | V; }
+MFV: is w3=0 & w2=0; x13=0 { }
+MFZ: is w2=1 & w0_1=3; x0_15 { AZ = ZZ1 | ZZ0; AN = NN1 | NN0; }
+MFZ: is (w2=0 | w0_1!=3); x13=1 & x11_12=3 { AZ = ZZ1 | ZZ0; AN = NN1 | NN0; }
+MFZ: is (w2=0 | w0_1!=3); x13=0 { }
+MFZ: is (w2=0 | w0_1!=3); x13=1 & x11_12!=3 { }
+
+# Valid modes: P=0 any but 5, 7, 10, 13-15; P=1 also not T, TFU, IH.
+MACMODE: is w3=0 & (w5_8<5 | w5_8=6 | w5_8=8 | w5_8=9 | w5_8=11 | w5_8=12) { }
+MACMODE: is w3=1 & (w5_8=0 | w5_8=1 | w5_8=3 | w5_8=4 | w5_8=8 | w5_8=9 | w5_8=12) { }
+
+DSP: MAC1 MAC0 OPTM is (w12_15=0xc & w9_10=0 & MACMODE; x0_15) & MAC1 & MAC0 & OPTM & W1 & W0 & MFV & MFZ {
+  build MAC1; build MAC0; build W1; build W0; build MFV; build MFZ;
+}
+
+# ---- dsp32mult ----
+MSEP1: "(M)," is w4=1; x13=1 { }
+MSEP1: "," is w4=0; x13=1 { }
+MSEP1: is op; x13=0 { }
+
+# In dsp32mult "(M)" joins the mode unless both halves are written.
+MOPTM: is w4=0 & w5_8=0; x0_15 { }
+MOPTM: is w4=1 & w5_8=0 & w2=1; x13=1 { }
+MOPTM: "(M)" is w4=1 & w5_8=0 & w2=0; x0_15 { }
+MOPTM: "(M)" is w4=1 & w5_8=0 & w2=1; x13=0 { }
+MOPTM: "("^MODE^")" is w4=0 & w5_8!=0 & MODE; x0_15 { }
+MOPTM: "("^MODE^")" is w4=1 & w5_8!=0 & MODE & w2=1; x13=1 { }
+MOPTM: "(M,"^MODE^")" is w4=1 & w5_8!=0 & MODE & w2=0; x0_15 { }
+MOPTM: "(M,"^MODE^")" is w4=1 & w5_8!=0 & MODE & w2=1; x13=0 { }
+
+MUL1: is w2=0; x0_15 { PSAT1 = 0; OVF1 = 0; }
+MUL1: D1 "=" M1A "*" M1B MSEP1 is (w2=1 & PROD1 & EXT1; M1A & M1B) & D1 & MSEP1 {
+  MA1 = M1A; MB1 = M1B; build PROD1; ACC1 = PR1; ACN1 = PR1; ASAT1 = 0; build EXT1;
+}
+MUL0: is w2=1; x13=0 { PSAT0 = 0; OVF0 = 0; }
+MUL0: D0 "=" M0A "*" M0B is (PROD0 & EXT0; x13=1 & M0A & M0B) & D0 {
+  MA0 = M0A; MB0 = M0B; build PROD0; ACC0 = PR0; ACN0 = PR0; ASAT0 = 0; build EXT0;
+}
+
+WM1: is w2=0; x0_15 { }
+WM1: is w2=1 & w3=0; xdh6 { xdh6 = RES1:2; }
+WM1: is w2=1 & w3=1; DP1 { DP1 = RES1; }
+WM0: is op; x13=0 { }
+WM0: is w3=0; x13=1 & xdl6 { xdl6 = RES0:2; }
+WM0: is w3=1; x13=1 & xdr6 { xdr6 = RES0; }
+
+MULMODE: is w3=0 & (w5_8<3 | w5_8=4 | w5_8=6 | w5_8=8 | w5_8=9 | w5_8=11 | w5_8=12) { }
+MULMODE: is w3=1 & (w5_8=0 | w5_8=1 | w5_8=4 | w5_8=8 | w5_8=9) { }
+
+DSP: MUL1 MUL0 MOPTM is (w12_15=0xc & w9_10=1 & MULMODE; x0_15) & MUL1 & MUL0 & MOPTM & WM1 & WM0 {
+  build MUL1; build MUL0; build WM1; build WM0;
+  V = PSAT1 | PSAT0 | OVF1 | OVF0; V_COPY = V; VS = VS | V;
+}
+
+@include "bfin_dspalu.sinc"
+@include "bfin_dspshift.sinc"
