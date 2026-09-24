@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<language_definitions>
+  <language processor="Blackfin" endian="little" size="32" variant="default"
+            version="0.1" slafile="blackfin.sla" processorspec="blackfin.pspec"
+            id="Blackfin:LE:32:default">
+    <description>Analog Devices Blackfin (classic ISA, experimental)</description>
+    <compiler name="GNU Blackfin" spec="blackfin.cspec" id="default"/>
+    <external_name tool="gnu" name="bfin"/>
+  </language>
+</language_definitions>
