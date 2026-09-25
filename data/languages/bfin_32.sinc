@@ -72,6 +72,9 @@ DBGAR: "SP" is w0_5=14 { }
 DBGAR: "A0.X" is w0_5=32 { }
 DBGAR: "A1.X" is w0_5=34 { }
 DBGAR: "ASTAT" is w0_5=38 { }
+DBGAR: "...... Illegal register ......." is w0_5=36 { }
+DBGAR: "...... Illegal register ......." is w0_5=37 { }
+DBGAR: "...... Illegal register ......." is w3_5=5 { }
 INSN:"DBGA" "("^rgl0^","^x0_15^")" is w8_15=0xf0 & w6_7=0 & rgl0; x0_15 { dbg_assert(); }
 INSN:"DBGA" "("^rgh0^","^x0_15^")" is w8_15=0xf0 & w6_7=1 & rgh0; x0_15 { dbg_assert(); }
 INSN:"DBGAL" "("^DBGAR^","^x0_15^")" is w8_15=0xf0 & w6_7=2 & DBGAR; x0_15 { dbg_assert(); }

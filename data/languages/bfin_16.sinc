@@ -462,6 +462,11 @@ DBGR: "SP" is w0_5=14 { }
 DBGR: "A0.X" is w0_5=32 { }
 DBGR: "A1.X" is w0_5=34 { }
 DBGR: "ASTAT" is w0_5=38 { }
+# GNU's simulator-only debug opcodes print this literal for reserved register
+# selectors (group 4, registers 4/5; all of group 5).
+DBGR: "...... Illegal register ......." is w0_5=36 { }
+DBGR: "...... Illegal register ......." is w0_5=37 { }
+DBGR: "...... Illegal register ......." is w3_5=5 { }
 INSN:"DBG A0" is w8_15=0xf8 & w6_7=3 & w0_2=0 { dbg(); }
 INSN:"DBG A1" is w8_15=0xf8 & w6_7=3 & w0_2=1 { dbg(); }
 INSN:"ABORT" is w8_15=0xf8 & w6_7=3 & w0_2=3 { abort(); }
