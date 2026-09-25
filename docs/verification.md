@@ -69,7 +69,10 @@ flag in `Rd = A1 + A0, Rd = A1 - A0`.
 2. `python3 tools/bfin_isatest.py 16` (and `32 [n]`, or `image IMAGE`). It
    prints a summary to stderr and writes every non-match to
    `build/isa/<mode>.diff.tsv`. For `16`, the result is 65,488 `match` and
-   48 `text` (the LSETUP offset quirk).
+   48 `text` (the LSETUP offset quirk). Every decoded slot must also build
+   p-code: a slot whose constructor matches but whose p-code fails (for example
+   an attach-table index with no register) is reported as `pcode` and the run
+   exits non-zero; there are none in `16` or `32 96`.
 3. `python3 tools/bfin_semtest.py [image|dsp|16|all] [limit]` reuses the
    `build/isa/` images from step 2 and writes mismatches to `build/sem/diff.tsv`.
    `python3 tools/bfin_dagtest.py` exercises nonzero circular lengths in the

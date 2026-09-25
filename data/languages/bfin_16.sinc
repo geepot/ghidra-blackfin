@@ -71,13 +71,15 @@ AD: "LT1" is w9_11=6 & w3_5=4 { LT1 = MV & 0xfffffffe; }
 AD: sy3 is w9_11=7 & sy3 { sy3 = MV; }
 AD: "SEQSTAT" is w9_11=7 & w3_5=1 { }
 
-# Push/pop register (group and register as one 6-bit field).
-PS: psr is psr { export psr; }
+# Push/pop register (group and register as one 6-bit field). The base constructors
+# match only the psr/ppr entries that name a register; the other holes are ILLEGAL in
+# objdump (push SP, pop R/P, group 4 registers 4/5, group 5) and must not decode.
+PS: psr is psr & w0_5!=14 & (w0_5<32 | w0_5=33 | w0_5=35 | w0_5=39 | w0_5>=48) { export psr; }
 PS: "A0.X" is w0_5=32 { local t:4 = sext(A0.X); export t; }
 PS: "A1.X" is w0_5=34 { local t:4 = sext(A1.X); export t; }
 PS: "ASTAT" is w0_5=38 { local t:4; packastat(t); export t; }
 
-PD: ppr is ppr { ppr = MV; }
+PD: ppr is ppr & ((w0_5>=16 & w0_5<=31) | w0_5=33 | w0_5=35 | w0_5=39 | w0_5=48 | w0_5=50 | w0_5=51 | (w0_5>=53 & w0_5<=56) | w0_5>=58) { ppr = MV; }
 PD: "A0.X" is w0_5=32 { A0.X = MV:1; }
 PD: "A1.X" is w0_5=34 { A1.X = MV:1; }
 PD: "ASTAT" is w0_5=38 { unpackastat(MV); }
@@ -228,8 +230,9 @@ INSN:^dr0 "= CC" is w5_15=0x010 & w3_4=0 & dr0 { dr0 = zext(CC); }
 INSN:"CC" "=" dr0 is w5_15=0x010 & w3_4=1 & dr0 { CC = dr0 != 0; }
 INSN:"CC" "= !CC" is op=0x0218 { CC = CC == 0; }
 
-# CC2stat: CC op= ASTAT bit, or ASTAT bit op= CC. Undefined bits live in ASTAT_RSV.
-STB: cbit is cbit { export cbit; }
+# CC2stat: CC op= ASTAT bit, or ASTAT bit op= CC. Undefined bits live in ASTAT_RSV;
+# bit 5 is ILLEGAL in objdump and matches neither STB nor RSVB.
+STB: cbit is cbit & (w0_4<=3 | w0_4=6 | w0_4=8 | w0_4=12 | w0_4=13 | (w0_4>=16 & w0_4<=19) | w0_4=24 | w0_4=25) { export cbit; }
 INSN:"CC" "=" STB is w8_15=3 & w7=0 & w5_6=0 & STB { CC = STB; }
 INSN:"CC" "|=" STB is w8_15=3 & w7=0 & w5_6=1 & STB { CC = CC | STB; }
 INSN:"CC" "&=" STB is w8_15=3 & w7=0 & w5_6=2 & STB { CC = CC & STB; }

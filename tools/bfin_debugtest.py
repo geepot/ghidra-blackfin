@@ -22,7 +22,9 @@ def main():
     with open(binary, "wb") as out:
         for first, second, _, _ in cases:
             out.write(struct.pack("<5H", first, second, 0, 0, 0))
-    decoded = ghidra(binary, os.path.join(W, "build/isa/debug-reserved.tsv"))
+    decoded, pcode = ghidra(binary, os.path.join(W, "build/isa/debug-reserved.tsv"))
+    if pcode:
+        raise SystemExit(f"p-code failures: {pcode}")
     for i, (_, _, length, text) in enumerate(cases):
         got = decoded.get(BASE + i * SLOT)
         if got != (length, text):

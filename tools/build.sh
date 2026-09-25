@@ -43,5 +43,7 @@ if [ "${1:-}" = "--install" ]; then
   case "$(uname)" in Darwin) BASE="$HOME/Library/ghidra" ;; *) BASE="${XDG_CONFIG_HOME:-$HOME/.config}/ghidra" ;; esac
   EXT="$BASE/ghidra_${VER}_PUBLIC/Extensions"
   mkdir -p "$EXT" && rm -rf "$EXT/Blackfin" && unzip -q -o "$ZIP" -d "$EXT"
+  # Fresh mtimes: the zip's fixed 1980 dates would keep Ghidra's cached script classes.
+  touch "$EXT"/Blackfin/ghidra_scripts/*
   echo "installed into $EXT; restart Ghidra"
 fi

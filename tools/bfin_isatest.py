@@ -15,6 +15,8 @@ comments and number formats removed) and compared. Categories:
   extra     Ghidra decodes something objdump calls ILLEGAL
   length    both decode, different length
   text      same length, different text
+  pcode     a constructor matches but Ghidra cannot build its p-code (e.g. an
+            attach-table hole); always a bug, and the run exits non-zero
 Summary to stderr; build/isa/<mode>.diff.tsv lists every non-match.
 """
 import os
@@ -107,7 +109,11 @@ def ghidra(path, tsv):
     for line in open(tsv):
         a, n, text = line.rstrip("\n").split("\t", 2)
         gh[int(a)] = (int(n), text)
-    return gh
+    pcode = {}
+    for line in open(tsv + ".pcode"):
+        a, err = line.rstrip("\n").split("\t", 1)
+        pcode[int(a)] = err
+    return gh, pcode
 
 
 IMAGE = None
@@ -128,7 +134,7 @@ def main():
         for ws in words:
             f.write(struct.pack("<5H", *ws, 0))
     od = objdump(binpath)
-    gh = ghidra(binpath, os.path.join(d, f"{mode}.ghidra.tsv"))
+    gh, pcode = ghidra(binpath, os.path.join(d, f"{mode}.ghidra.tsv"))
     stats = Counter()
     shapes = defaultdict(Counter)
     with open(os.path.join(d, f"{mode}.diff.tsv"), "w") as out:
@@ -137,7 +143,9 @@ def main():
             on, ot = od.get(a, (0, "?"))
             gn, gt = gh.get(a, (0, ""))
             illegal = "ILLEGAL" in ot
-            if illegal and gn == 0:
+            if a in pcode:
+                kind, gt = "pcode", pcode[a]
+            elif illegal and gn == 0:
                 kind = "match"
             elif illegal:
                 kind = "extra"
@@ -160,6 +168,8 @@ def main():
         print(f"-- {kind}", file=sys.stderr)
         for s, n in c.most_common(12):
             print(f"{n:7d}  {s}", file=sys.stderr)
+    if stats["pcode"]:
+        raise SystemExit(f"{stats['pcode']} slots decode without p-code")
 
 
 if __name__ == "__main__":
