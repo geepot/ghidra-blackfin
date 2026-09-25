@@ -9,8 +9,16 @@
   moved to `CONTRIBUTING.md`.
 * Added `CONTRIBUTING.md`, this changelog and a "wrong decode or semantics"
   issue template.
-* Documented that there is no ELF loader opinion: choose
-  `Blackfin:LE:32:default` by hand.
+* Added an ELF opinion for 32-bit little-endian Blackfin files. Raw images
+  still need the language and load address chosen when importing.
+
+### Processor
+* Model circular I-register post-modification for configured B/L buffers,
+  including negative M-register steps and the L=0 linear case.
+* Decode the 40 reserved-register simulator debug forms with objdump's
+  literal operand text.
+* Added directed Ghidra emulator checks and a smoke test for the stock GUI
+  image's L1 bootstrap.
 
 ## 1.0.0 - 2026-09-25
 

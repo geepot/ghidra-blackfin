@@ -25,7 +25,7 @@ Only post bytes you are allowed to share; never attach whole firmware images.
   `tools/bfin_isatest.py 16` and `32` and `tools/bfin_semtest.py dsp` and
   `16` clean; say in the PR what you ran and what changed in the summary line.
   [docs/verification.md](docs/verification.md) explains the setup.
-- If you disagree with an oracle (as with the two objdump quirks), document why
+- If you disagree with an oracle (as with the LSETUP offset quirk), document why
   in [docs/verification.md](docs/verification.md) with the hardware or manual
   reference.
 - Keep `NOTICE.md` current when you consult a new reference, and do not commit
@@ -39,7 +39,8 @@ The language, in `data/languages/`:
 | File | Content |
 | --- | --- |
 | `blackfin.slaspec` | registers, context, tokens, register attachments |
-| `bfin_macros.sinc` | ASTAT flag helpers |
+| `blackfin.opinion` | automatic language selection for Blackfin ELF files |
+| `bfin_macros.sinc` | ASTAT flag and circular DAG helpers |
 | `bfin_16.sinc` | 16-bit instructions; the parallel-capable ones in `S16` |
 | `bfin_32.sinc` | LSETUP, immediate loads, long jump/call, 16-bit-offset loads/stores, LINK |
 | `bfin_dsp.sinc` | dsp32mac, dsp32mult |
@@ -50,4 +51,5 @@ The language, in `data/languages/`:
 
 Test tooling: `tools/` (harnesses and `build.sh`) and `ghidra_scripts/`
 (`DisasmSlots.java` decodes the synthetic slots, `BfinEmuTest.java` runs cases in
-Ghidra's p-code emulator, `ExportInstructions.java` dumps a program's instructions).
+Ghidra's p-code emulator, `ExportInstructions.java` dumps a program's instructions,
+and `LinearSweep.java` checks a contiguous code region).

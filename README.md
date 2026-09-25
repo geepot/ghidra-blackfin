@@ -22,10 +22,11 @@ re-disassemble them after upgrading.
 
 ## Quick start
 
-Import the file and choose the language **`Blackfin:LE:32:default`** (compiler
-spec `default`, "GNU Blackfin"). There is no ELF loader opinion, so Ghidra does
-not pick the language for you, for ELF files or raw images; for a raw image,
-also set its load address.
+Ghidra selects **`Blackfin:LE:32:default`** (compiler spec `default`, "GNU
+Blackfin") automatically for 32-bit little-endian Blackfin ELF files. For a raw
+image or an LDR boot stream, choose that language when importing; for a raw
+memory image, also set its load address. An LDR stream must first be unpacked
+into its target memory regions.
 
 ## Features
 
@@ -44,6 +45,8 @@ also set its load address.
 - **Zero-overhead hardware loops**: `LSETUP` marks the loop-bottom
   instruction in the context register; that instruction then decrements LC0
   or LC1 and branches back to the loop top, so loops decompile as loops.
+- **Circular DAG addressing**: post-modified I0-I3 pointers wrap within the
+  matching B/L buffer when L is nonzero; L=0 uses linear addressing.
 - `CALL` sets RETS; `LINK`/`UNLINK` keep RETS above the saved FP; push/pop
   multiple use the hardware register order; `CLI`/`STI` move IMASK.
 
@@ -53,10 +56,9 @@ also set its load address.
   byte-video operations `BYTEOP1P/2P/3P/16P/16M` and `SAA`, `DISALGNEXCPT`,
   cache control, `IDLE`, `RAISE`, `EXCPT` and the simulator pseudo instructions
   (`DBG`, `OUTC`, `HLT`, `DBGA`...).
-- **No circular DAG addressing** (L0-L3 non-zero). I registers are plain
-  pointers, as the GCC ABI keeps L0-L3 at zero.
-- **No ELF loader opinion**: choose the language by hand (see above).
-- `DBG`/`PRNT`/`DBGAL`/`DBGAH` with reserved register numbers do not decode.
+- Circular DAG updates assume a configured buffer: the incoming I register lies
+  within its B/L span and the modify amount does not exceed its length. Cases
+  outside that setup have not been checked against hardware.
 
 ## Build
 
@@ -75,15 +77,18 @@ and modes).
 
 | Check | Result |
 | --- | --- |
-| Every 16-bit instruction word against objdump (`tools/bfin_isatest.py 16`) | 65,448 of 65,536 identical; the other 88 are two documented objdump quirks |
-| 1.5M sampled 32/64-bit encodings with random parallel slots (`tools/bfin_isatest.py 32 96`) | identical except those quirks |
-| Semantics against the GNU simulator (`tools/bfin_semtest.py`) | 62,700 + 59,914 + 18,764 cases, no mismatch |
-| A whole analysed firmware program against objdump (`tools/bfin_crosscheck.py`) | 160,291 of 160,291 instructions agree |
+| Every 16-bit instruction word against objdump (`tools/bfin_isatest.py 16`) | 65,488 of 65,536 identical; 48 LSETUP offset text differences |
+| 1.55 million sampled 32/64-bit encodings with random parallel slots (`tools/bfin_isatest.py 32 96`) | 1,547,421 match; 867 LSETUP offset text differences |
+| Semantics against the GNU simulator (`tools/bfin_semtest.py`) | GUI bootstrap: 720 match; all 16-bit encodings: 59,914 match; sampled DSP packets: 20,121 match; no mismatches after documented oracle exclusions |
+| Circular DAG addressing (`tools/bfin_dagtest.py`) | 13 nonzero-L and linear cases agree with the GNU simulator |
+| Whole reconstructed GUI ELF against objdump (`tools/bfin_crosscheck.py`) | All 103,614 analysed instructions agree |
+| GUI LDR image in adjacent research repository (`tools/bfin_gui_smoke.py IMAGE`) | Its two L1 code blocks sweep as 367 two-byte and 170 four-byte instructions (1,414 bytes); all 368 distinct encodings match objdump; reconstructed ELF selects Blackfin automatically |
 
-The harnesses run Ghidra headless against the installed extension and need an
-objdump with Blackfin support, plus `bfin-elf-as`/`bfin-elf-ld` and the GNU
-Blackfin simulator for the semantic test. [docs/verification.md](docs/verification.md)
-has the setup, the order to run them in, the two objdump quirks and the
+The harnesses run Ghidra headless against the installed extension. The full
+comparison needs an objdump with Blackfin support, plus `bfin-elf-as`/
+`bfin-elf-ld` and the GNU Blackfin simulator for the semantic test. The
+directed DAG, debug and GUI smoke tests only need Ghidra. [docs/verification.md](docs/verification.md)
+has the setup, the order to run them in, the objdump LSETUP quirk and the
 simulator cases left out of the comparison. No firmware or other third-party
 image is committed.
 
