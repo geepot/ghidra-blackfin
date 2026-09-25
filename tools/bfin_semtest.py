@@ -18,6 +18,7 @@ Summary to stderr; build/sem/diff.tsv lists every mismatch.
 import os
 import random
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -27,7 +28,7 @@ W = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 B = os.path.join(W, "build/sem")
 GHIDRA = os.environ.get("GHIDRA", "/opt/homebrew/opt/ghidra/libexec")
 # directory holding bfin-elf-as and bfin-elf-ld (GNU binutils configured --target=bfin-elf)
-TOOLS = os.environ.get("BFIN_BINUTILS", "/usr/local/bin")
+TOOLS = os.environ.get("BFIN_BINUTILS") or os.path.dirname(shutil.which("bfin-elf-as") or "/usr/local/bin/")
 # the GNU Blackfin simulator (gdb sim, configured --target=bfin-elf)
 SIM = os.environ.get("BFIN_RUN", "bfin-elf-run")
 REGION = 0x01000000          # case i's window is REGION + 0x100 * i
@@ -97,8 +98,10 @@ def sim_undefined(words, regs, text):
     parts = [dests(p) for p in text.split("||")]
     if len(parts) == 3 and (parts[0] & (parts[1] | parts[2]) or parts[1] & parts[2]):
         return True
+    if len(parts) == 3 and parts[0] & set(re.findall(r"R(\d)", "||".join(text.split("||")[1:]))):
+        return True     # GDB 17.2 lets both 16-bit slots see the DSP slot's new data register
     if len(parts) == 3 and parts[1] & set(re.findall(r"R(\d)", text.split("||")[2])):
-        return True     # the simulator lets slot 2 see slot 1's load (writeback covers slot 0 only)
+        return True     # the simulator lets slot 2 see slot 1's new data register
     w0 = words[0]
     if (w0 & 0xFC00) == 0x4000 and (w0 >> 6) & 0xF in (0, 1, 2) and regs["R%d" % ((w0 >> 3) & 7)] >> 31:
         return True     # Dreg shift by a negative count: C shift by a negative amount
@@ -170,7 +173,9 @@ def asm_case(i, words, regs, win):
         s += imm(r, regs[r])
     s.append(".short " + ", ".join(f"0x{w:04x}" for w in words))
     s += [f"DBG {r};" for r in OUT]
-    s += imm("P5", win) + ["R7 = 0;", "R5 = 0;", "P4 = 0x40 (Z);", f"LSETUP (s{i}, z{i}) LC0 = P4;",
+    # The GNU simulator leaves the short `R7 = 0` / `R5 = 0` encoding unchanged.
+    # Use half-register moves here so the checksum starts from zero on both sides.
+    s += imm("P5", win) + ["R7.L = 0; R7.H = 0;", "R5.L = 0; R5.H = 0;", "P4 = 0x40 (Z);", f"LSETUP (s{i}, z{i}) LC0 = P4;",
                            f"s{i}: R6 = [P5++];", "R7 = R7 + R6;", f"z{i}: R5 = R5 ^ R6;", "DBG R7;", "DBG R5;",
                            f"e{i}:"]
     return "\n".join(s)
@@ -196,11 +201,8 @@ def run_sim(cases, lo, hi, region):
     subprocess.run([f"{TOOLS}/bfin-elf-as", src, "-o", obj], check=True)
     subprocess.run([f"{TOOLS}/bfin-elf-ld", "-e", "__start", "-Ttext=0x1000", f"-Tdata=0x{REGION + 0x100 * lo:x}",
                     obj, "-o", elf], check=True)
-    # Slots of a parallel packet read their sources before any write lands; the
-    # simulator only models that for data registers with this switch.
-    env = dict(os.environ, BFIN_PARALLEL_WRITEBACK="1")
     out = subprocess.run([SIM, "--environment", "operating", elf], capture_output=True, text=True,
-                         timeout=600, env=env).stdout
+                         timeout=600).stdout
     done, cur, vals = {}, None, []
     for m in re.finditer(r"^DBG : (\S+) = (\S+)", out, re.M):
         if m.group(1) == "RETN":          # case marker
@@ -299,6 +301,8 @@ def main():
         print(f"-- {kind}", file=sys.stderr)
         for sh, n in c.most_common(25):
             print(f"{n:7d}  {sh}", file=sys.stderr)
+    if stats["value"] or stats["flags"] or stats["ghidra-error"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

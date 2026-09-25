@@ -10,6 +10,8 @@ encodings, syntax and behaviour right.
 - **GNU gdb/sim 17.2, `sim/bfin/bfin-sim.c`** (GPL-3.0-or-later): execution
   semantics, including ASTAT flag updates, saturation and rounding. The
   simulator is the semantic oracle.
+- **Analog Devices, Blackfin Processor Programming Reference, revision 2.2**:
+  circular DAG buffer setup and wraparound requirements.
 - **`0bs3n/arch-blackfin`**, commit `5cd19a58b7790ab18dc5100ef8033254945329af`,
   `disassembler/include/bfin.h` (GPL-2.0-or-later): field masks consulted by
   the first version of this module.

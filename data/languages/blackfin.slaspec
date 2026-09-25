@@ -3,9 +3,8 @@
 #
 # Encodings and assembly syntax follow the GNU binutils Blackfin disassembler
 # (the decoding oracle); execution semantics follow the GNU simulator (the
-# semantic oracle). Circular DAG addressing (L0-L3 != 0) is not modelled: the
-# I registers are plain pointers, as the GCC ABI requires. The byte-video
-# operations (BYTEOP*, SAA) are opaque user operations.
+# semantic oracle). The byte-video operations (BYTEOP*, SAA) are opaque user
+# operations.
 
 define endian=little;
 define alignment=2;
@@ -92,7 +91,7 @@ define token instr(16)
   sd0=(0,2) sd6=(6,8) sdl0=(0,2) sdh0=(0,2) sdl6=(6,8) sdh6=(6,8)
   sp0=(0,2) sp3=(3,5) si0=(0,1) si3=(3,4) sm2=(2,3) sm5=(5,6) sdp0=(0,3)
   im0=(0,2) im3=(3,5) bl0=(0,2) bl3=(3,5) lc0=(0,2) lc3=(3,5) sy0=(0,2) sy3=(3,5)
-  ir0=(0,1) ir3=(3,4) mr2=(2,3) mr5=(5,6)
+  ir0=(0,1) ir3=(3,4) br0=(0,1) br3=(3,4) lr0=(0,1) lr3=(3,4) mr2=(2,3) mr5=(5,6)
   dp0=(0,3)
   rg0=(0,4) rgl0=(0,4) rgh0=(0,4)
   psr=(0,5) ppr=(0,5)
@@ -126,6 +125,8 @@ attach variables [ bl0 bl3 ] [ B0 B1 B2 B3 L0 L1 L2 L3 ];
 attach variables [ lc0 lc3 ] [ LC0 LT0 LB0 LC1 LT1 LB1 CYCLES CYCLES2 ];
 attach variables [ sy0 sy3 ] [ USP SEQSTAT SYSCFG RETI RETX RETN RETE EMUDAT ];
 attach variables [ ir0 ir3 ] [ I0 I1 I2 I3 ];
+attach variables [ br0 br3 ] [ B0 B1 B2 B3 ];
+attach variables [ lr0 lr3 ] [ L0 L1 L2 L3 ];
 attach variables [ mr2 mr5 ] [ M0 M1 M2 M3 ];
 attach variables [ dp0 ] [ R0 R1 R2 R3 R4 R5 R6 R7 P0 P1 P2 P3 P4 P5 SP FP ];
 attach variables [ rg0 ] [ R0 R1 R2 R3 R4 R5 R6 R7 P0 P1 P2 P3 P4 P5 SP FP I0 I1 I2 I3 M0 M1 M2 M3 B0 B1 B2 B3 L0 L1 L2 L3 ];

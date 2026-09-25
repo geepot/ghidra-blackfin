@@ -63,3 +63,30 @@ macro brev32(x) {
   x = ((x >> 8) & 0x00ff00ff) | ((x & 0x00ff00ff) << 8);
   x = (x >> 16) | (x << 16);
 }
+
+# DAG post-modify. For a configured circular buffer, the index is relative to
+# Bn and wraps once at either end of its Ln-byte span. The architectural setup
+# requires the original index to lie in the span and |modify| <= length.
+# A zero length selects linear addressing, including when Bn retains a value.
+macro dagupdate(i, source, b, l, modify) {
+  local step:4 = modify;
+  local next:4 = source + step;
+  if (l == 0) goto <done>;
+  local offset:8 = zext(source) - zext(b) + sext(step);
+  if (step s< 0) goto <negative>;
+  if (offset < zext(l)) goto <wrapped>;
+  offset = offset - zext(l);
+  goto <wrapped>;
+<negative>
+  if (offset s>= 0) goto <wrapped>;
+  offset = offset + zext(l);
+<wrapped>
+  next = b + offset:4;
+<done>
+  i = next;
+}
+
+macro dagsub(i, source, b, l, modify) {
+  local negative:4 = 0 - modify;
+  dagupdate(i, source, b, l, negative);
+}

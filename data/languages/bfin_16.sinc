@@ -356,37 +356,37 @@ S16: "W[" pr0^"] =" SVL6 is w12_15=8 & w11=1 & w9_10=1 & SVL6 & pr0 & PEQ & PV0 
 S16: "W[" pr0^"] =" SVH6 is w12_15=8 & w11=1 & w9_10=2 & SVH6 & pr0 & PEQ & PV0 { *:2 PV0 = SVH6; }
 
 # dagMODim / dagMODik (I-register modify)
-S16: ir0 "+=" mr2 is w8_15=0x9e & w7=0 & w5_6=3 & w4=0 & ir0 & mr2 & IV0 & MV2 { ir0 = IV0 + MV2; }
-S16: ir0 "-=" mr2 is w8_15=0x9e & w7=0 & w5_6=3 & w4=1 & ir0 & mr2 & IV0 & MV2 { ir0 = IV0 - MV2; }
+S16: ir0 "+=" mr2 is w8_15=0x9e & w7=0 & w5_6=3 & w4=0 & ir0 & br0 & lr0 & mr2 & IV0 & MV2 { dagupdate(ir0, IV0, br0, lr0, MV2); }
+S16: ir0 "-=" mr2 is w8_15=0x9e & w7=0 & w5_6=3 & w4=1 & ir0 & br0 & lr0 & mr2 & IV0 & MV2 { dagsub(ir0, IV0, br0, lr0, MV2); }
 S16: ir0 "+=" mr2 "(BREV)" is w8_15=0x9e & w7=1 & w5_6=3 & w4=0 & ir0 & mr2 & IV0 & MV2 {
   local a:4 = IV0; local b:4 = MV2; brev32(a); brev32(b); local r:4 = a + b; brev32(r); ir0 = r;
 }
-S16: ir0 "+= 0x2" is w4_15=0x9f6 & w2_3=0 & ir0 & IV0 { ir0 = IV0 + 2; }
-S16: ir0 "-= 0x2" is w4_15=0x9f6 & w2_3=1 & ir0 & IV0 { ir0 = IV0 - 2; }
-S16: ir0 "+= 0x4" is w4_15=0x9f6 & w2_3=2 & ir0 & IV0 { ir0 = IV0 + 4; }
-S16: ir0 "-= 0x4" is w4_15=0x9f6 & w2_3=3 & ir0 & IV0 { ir0 = IV0 - 4; }
+S16: ir0 "+= 0x2" is w4_15=0x9f6 & w2_3=0 & ir0 & br0 & lr0 & IV0 { dagupdate(ir0, IV0, br0, lr0, 2); }
+S16: ir0 "-= 0x2" is w4_15=0x9f6 & w2_3=1 & ir0 & br0 & lr0 & IV0 { dagsub(ir0, IV0, br0, lr0, 2); }
+S16: ir0 "+= 0x4" is w4_15=0x9f6 & w2_3=2 & ir0 & br0 & lr0 & IV0 { dagupdate(ir0, IV0, br0, lr0, 4); }
+S16: ir0 "-= 0x4" is w4_15=0x9f6 & w2_3=3 & ir0 & br0 & lr0 & IV0 { dagsub(ir0, IV0, br0, lr0, 4); }
 
 # dspLDST: loads/stores through I0-I3
-S16: dr0 "= ["^ir3^"++]" is w10_15=0x27 & w9=0 & w7_8=0 & w5_6=0 & dr0 & ir3 & IV3 { local a:4 = IV3; ir3 = IV3 + 4; dr0 = *:4 a; }
-S16: dl0 "= W["^ir3^"++]" is w10_15=0x27 & w9=0 & w7_8=0 & w5_6=1 & dl0 & ir3 & IV3 { local a:4 = IV3; ir3 = IV3 + 2; dl0 = *:2 a; }
-S16: dh0 "= W["^ir3^"++]" is w10_15=0x27 & w9=0 & w7_8=0 & w5_6=2 & dh0 & ir3 & IV3 { local a:4 = IV3; ir3 = IV3 + 2; dh0 = *:2 a; }
-S16: dr0 "= ["^ir3^"--]" is w10_15=0x27 & w9=0 & w7_8=1 & w5_6=0 & dr0 & ir3 & IV3 { local a:4 = IV3; ir3 = IV3 - 4; dr0 = *:4 a; }
-S16: dl0 "= W["^ir3^"--]" is w10_15=0x27 & w9=0 & w7_8=1 & w5_6=1 & dl0 & ir3 & IV3 { local a:4 = IV3; ir3 = IV3 - 2; dl0 = *:2 a; }
-S16: dh0 "= W["^ir3^"--]" is w10_15=0x27 & w9=0 & w7_8=1 & w5_6=2 & dh0 & ir3 & IV3 { local a:4 = IV3; ir3 = IV3 - 2; dh0 = *:2 a; }
+S16: dr0 "= ["^ir3^"++]" is w10_15=0x27 & w9=0 & w7_8=0 & w5_6=0 & dr0 & ir3 & br3 & lr3 & IV3 { local a:4 = IV3; dagupdate(ir3, IV3, br3, lr3, 4); dr0 = *:4 a; }
+S16: dl0 "= W["^ir3^"++]" is w10_15=0x27 & w9=0 & w7_8=0 & w5_6=1 & dl0 & ir3 & br3 & lr3 & IV3 { local a:4 = IV3; dagupdate(ir3, IV3, br3, lr3, 2); dl0 = *:2 a; }
+S16: dh0 "= W["^ir3^"++]" is w10_15=0x27 & w9=0 & w7_8=0 & w5_6=2 & dh0 & ir3 & br3 & lr3 & IV3 { local a:4 = IV3; dagupdate(ir3, IV3, br3, lr3, 2); dh0 = *:2 a; }
+S16: dr0 "= ["^ir3^"--]" is w10_15=0x27 & w9=0 & w7_8=1 & w5_6=0 & dr0 & ir3 & br3 & lr3 & IV3 { local a:4 = IV3; dagsub(ir3, IV3, br3, lr3, 4); dr0 = *:4 a; }
+S16: dl0 "= W["^ir3^"--]" is w10_15=0x27 & w9=0 & w7_8=1 & w5_6=1 & dl0 & ir3 & br3 & lr3 & IV3 { local a:4 = IV3; dagsub(ir3, IV3, br3, lr3, 2); dl0 = *:2 a; }
+S16: dh0 "= W["^ir3^"--]" is w10_15=0x27 & w9=0 & w7_8=1 & w5_6=2 & dh0 & ir3 & br3 & lr3 & IV3 { local a:4 = IV3; dagsub(ir3, IV3, br3, lr3, 2); dh0 = *:2 a; }
 S16: dr0 "= ["^ir3^"]" is w10_15=0x27 & w9=0 & w7_8=2 & w5_6=0 & dr0 & ir3 & IV3 { dr0 = *:4 IV3; }
 S16: dl0 "= W["^ir3^"]" is w10_15=0x27 & w9=0 & w7_8=2 & w5_6=1 & dl0 & ir3 & IV3 { dl0 = *:2 IV3; }
 S16: dh0 "= W["^ir3^"]" is w10_15=0x27 & w9=0 & w7_8=2 & w5_6=2 & dh0 & ir3 & IV3 { dh0 = *:2 IV3; }
-S16: "[" ir3^"++] =" SV0 is w10_15=0x27 & w9=1 & w7_8=0 & w5_6=0 & SV0 & ir3 & IV3 { *:4 IV3 = SV0; ir3 = IV3 + 4; }
-S16: "W[" ir3^"++] =" SVL0 is w10_15=0x27 & w9=1 & w7_8=0 & w5_6=1 & SVL0 & ir3 & IV3 { *:2 IV3 = SVL0; ir3 = IV3 + 2; }
-S16: "W[" ir3^"++] =" SVH0 is w10_15=0x27 & w9=1 & w7_8=0 & w5_6=2 & SVH0 & ir3 & IV3 { *:2 IV3 = SVH0; ir3 = IV3 + 2; }
-S16: "[" ir3^"--] =" SV0 is w10_15=0x27 & w9=1 & w7_8=1 & w5_6=0 & SV0 & ir3 & IV3 { *:4 IV3 = SV0; ir3 = IV3 - 4; }
-S16: "W[" ir3^"--] =" SVL0 is w10_15=0x27 & w9=1 & w7_8=1 & w5_6=1 & SVL0 & ir3 & IV3 { *:2 IV3 = SVL0; ir3 = IV3 - 2; }
-S16: "W[" ir3^"--] =" SVH0 is w10_15=0x27 & w9=1 & w7_8=1 & w5_6=2 & SVH0 & ir3 & IV3 { *:2 IV3 = SVH0; ir3 = IV3 - 2; }
+S16: "[" ir3^"++] =" SV0 is w10_15=0x27 & w9=1 & w7_8=0 & w5_6=0 & SV0 & ir3 & br3 & lr3 & IV3 { *:4 IV3 = SV0; dagupdate(ir3, IV3, br3, lr3, 4); }
+S16: "W[" ir3^"++] =" SVL0 is w10_15=0x27 & w9=1 & w7_8=0 & w5_6=1 & SVL0 & ir3 & br3 & lr3 & IV3 { *:2 IV3 = SVL0; dagupdate(ir3, IV3, br3, lr3, 2); }
+S16: "W[" ir3^"++] =" SVH0 is w10_15=0x27 & w9=1 & w7_8=0 & w5_6=2 & SVH0 & ir3 & br3 & lr3 & IV3 { *:2 IV3 = SVH0; dagupdate(ir3, IV3, br3, lr3, 2); }
+S16: "[" ir3^"--] =" SV0 is w10_15=0x27 & w9=1 & w7_8=1 & w5_6=0 & SV0 & ir3 & br3 & lr3 & IV3 { *:4 IV3 = SV0; dagsub(ir3, IV3, br3, lr3, 4); }
+S16: "W[" ir3^"--] =" SVL0 is w10_15=0x27 & w9=1 & w7_8=1 & w5_6=1 & SVL0 & ir3 & br3 & lr3 & IV3 { *:2 IV3 = SVL0; dagsub(ir3, IV3, br3, lr3, 2); }
+S16: "W[" ir3^"--] =" SVH0 is w10_15=0x27 & w9=1 & w7_8=1 & w5_6=2 & SVH0 & ir3 & br3 & lr3 & IV3 { *:2 IV3 = SVH0; dagsub(ir3, IV3, br3, lr3, 2); }
 S16: "[" ir3^"] =" SV0 is w10_15=0x27 & w9=1 & w7_8=2 & w5_6=0 & SV0 & ir3 & IV3 { *:4 IV3 = SV0; }
 S16: "W[" ir3^"] =" SVL0 is w10_15=0x27 & w9=1 & w7_8=2 & w5_6=1 & SVL0 & ir3 & IV3 { *:2 IV3 = SVL0; }
 S16: "W[" ir3^"] =" SVH0 is w10_15=0x27 & w9=1 & w7_8=2 & w5_6=2 & SVH0 & ir3 & IV3 { *:2 IV3 = SVH0; }
-S16: dr0 "= ["^ir3^" ++ "^mr5^"]" is w10_15=0x27 & w9=0 & w7_8=3 & dr0 & ir3 & mr5 & IV3 & MV5 { local a:4 = IV3; ir3 = IV3 + MV5; dr0 = *:4 a; }
-S16: "[" ir3^" ++ "^mr5^"] =" SV0 is w10_15=0x27 & w9=1 & w7_8=3 & SV0 & ir3 & mr5 & IV3 & MV5 { *:4 IV3 = SV0; ir3 = IV3 + MV5; }
+S16: dr0 "= ["^ir3^" ++ "^mr5^"]" is w10_15=0x27 & w9=0 & w7_8=3 & dr0 & ir3 & br3 & lr3 & mr5 & IV3 & MV5 { local a:4 = IV3; dagupdate(ir3, IV3, br3, lr3, MV5); dr0 = *:4 a; }
+S16: "[" ir3^" ++ "^mr5^"] =" SV0 is w10_15=0x27 & w9=1 & w7_8=3 & SV0 & ir3 & br3 & lr3 & mr5 & IV3 & MV5 { *:4 IV3 = SV0; dagupdate(ir3, IV3, br3, lr3, MV5); }
 
 # LDST: pointer-register indirect, post-increment/decrement.
 S16: dr0 "= ["^pr3^"++]" is w12_15=9 & w10_11=0 & w9=0 & w7_8=0 & w6=0 & dr0 & pr3 & PV3 { local a:4 = PV3; pr3 = PV3 + 4; dr0 = *:4 a; }
