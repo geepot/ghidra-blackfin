@@ -1,0 +1,6 @@
+<opinions>
+    <constraint loader="Executable and Linking Format (ELF)" compilerSpecID="default">
+        <!-- EM_BLACKFIN (106), 32-bit little-endian classic Blackfin. -->
+        <constraint primary="106" processor="Blackfin" endian="little" size="32" variant="default" />
+    </constraint>
+</opinions>
