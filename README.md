@@ -1,42 +1,33 @@
 # ghidra-blackfin
 
 A Ghidra 12 processor extension for the **classic Analog Devices Blackfin ISA**
-(ADSP-BF53x and relatives): SLEIGH language `Blackfin:LE:32:default`. Ghidra has no
-Blackfin support; this module decodes the whole instruction set, including multi-issue
-packets and hardware loops, and gives every instruction p-code semantics, so the
-decompiler works on Blackfin code.
-
-Decoding is checked instruction by instruction against GNU objdump and the semantics
-against the GNU Blackfin simulator (see [Verification](#verification)). It was built
-to reverse-engineer the ADSP-BF531 firmware of a DJ player and has been exercised on
-160,291 real instructions, all of which agree with objdump.
+(ADSP-BF53x and relatives). Ghidra has no Blackfin support; this module decodes
+the whole instruction set, including multi-issue packets and hardware loops, and
+gives every instruction p-code semantics, so the decompiler works on Blackfin
+code. Decoding is checked against GNU objdump and semantics against the GNU
+Blackfin simulator. It was built to reverse-engineer the ADSP-BF531 firmware of
+the Pioneer CDJ-2000NXS.
 
 ## Install
 
-1. Download `ghidra_<version>_PUBLIC_Blackfin.zip` for your Ghidra version from
-   [Releases](../../releases), or build it (below).
+1. Download `ghidra_<version>_PUBLIC_Blackfin.zip` from
+   [Releases](https://github.com/geepot/ghidra-blackfin/releases), or
+   [build it](#build).
 2. In Ghidra: *File → Install Extensions*, **+**, pick the zip, restart Ghidra.
-3. Import a raw image (or an ELF) and choose language `Blackfin:LE:32:default`; for a raw
-   image, set its load address.
 
-The zip is tied to the Ghidra version it was built against; rebuild it for any
-other 12.x release.
+The zip is tied to the Ghidra version it was built against (the current release
+targets 12.1.3); rebuild it for any other 12.x release. Programs analysed with an
+earlier build keep the old instruction lengths in their listing: clear and
+re-disassemble them after upgrading.
 
-## Build
+## Quick start
 
-Needs a Ghidra 12.x install (for `support/sleigh`) and Python 3.
+Import the file and choose the language **`Blackfin:LE:32:default`** (compiler
+spec `default`, "GNU Blackfin"). There is no ELF loader opinion, so Ghidra does
+not pick the language for you, for ELF files or raw images; for a raw image,
+also set its load address.
 
-```sh
-tools/build.sh             # dist/ghidra_<ver>_PUBLIC_Blackfin.zip
-tools/build.sh --install   # ... and unpack it into your per-user Extensions folder
-```
-
-Set `GHIDRA_INSTALL_DIR` if Ghidra is not Homebrew's `opt/ghidra`. The `.sla` is
-compiled at build time and never committed; the zip is reproducible (fixed dates and
-modes). Programs analysed with an earlier build keep the old instruction lengths in
-their listing: clear and re-disassemble them after upgrading.
-
-## What it models
+## Features
 
 - **All encodings GNU objdump decodes**, with objdump's assembly syntax
   (spacing and number format aside, the listing text equals objdump's).
@@ -56,82 +47,52 @@ their listing: clear and re-disassemble them after upgrading.
 - `CALL` sets RETS; `LINK`/`UNLINK` keep RETS above the saved FP; push/pop
   multiple use the hardware register order; `CLI`/`STI` move IMASK.
 
-Opaque (user operations with honest inputs and outputs): the byte-video
-operations `BYTEOP1P/2P/3P/16P/16M` and `SAA`, `DISALGNEXCPT`, cache control,
-`IDLE`, `RAISE`, `EXCPT` and the simulator pseudo instructions (`DBG`, `OUTC`,
-`HLT`, `DBGA`...).
+## Limitations
 
-Not modelled: circular DAG addressing (L0-L3 non-zero). I registers are plain
-pointers, as the GCC ABI keeps L0-L3 at zero.
+- **Opaque operations** (user operations with honest inputs and outputs): the
+  byte-video operations `BYTEOP1P/2P/3P/16P/16M` and `SAA`, `DISALGNEXCPT`,
+  cache control, `IDLE`, `RAISE`, `EXCPT` and the simulator pseudo instructions
+  (`DBG`, `OUTC`, `HLT`, `DBGA`...).
+- **No circular DAG addressing** (L0-L3 non-zero). I registers are plain
+  pointers, as the GCC ABI keeps L0-L3 at zero.
+- **No ELF loader opinion**: choose the language by hand (see above).
+- `DBG`/`PRNT`/`DBGAL`/`DBGAH` with reserved register numbers do not decode.
 
-## Verification
+## Build
 
-| Check | Command | Result |
-| --- | --- | --- |
-| Every 16-bit instruction word against objdump | `tools/bfin_isatest.py 16` | 65,448 of 65,536 identical; the rest are the objdump quirks below |
-| 1.5M sampled 32/64-bit encodings with random parallel slots | `tools/bfin_isatest.py 32 96` | identical except the quirks below |
-| Every encoding in a real code image | `tools/bfin_isatest.py image IMAGE` | identical except the quirks below |
-| Semantics against the GNU simulator: random register states, a memory window per case | `tools/bfin_semtest.py [image\|dsp\|16]` | 62,700 + 59,914 + 18,764 cases, no mismatch |
-| A whole analysed program against objdump, per code run | `ExportInstructions.java`, then `tools/bfin_crosscheck.py` | 160,291 of 160,291 instructions agree |
+Needs a Ghidra 12.x install (for `support/sleigh`) and Python 3.
 
-The harnesses run Ghidra headless with the *installed* extension (`GHIDRA`, default
-Homebrew's `opt/ghidra/libexec`; JDK 21 via `JAVA_HOME`) and need:
+```sh
+tools/build.sh             # dist/ghidra_<ver>_PUBLIC_Blackfin.zip
+tools/build.sh --install   # ... and unpack it into that Ghidra version's per-user Extensions folder
+```
 
-| Variable | Tool | Default |
-| --- | --- | --- |
-| `BFIN_OBJDUMP` | an objdump with Blackfin support (binutils `--enable-targets=all`, or `bfin-elf-objdump`) | Homebrew binutils' `objdump` |
-| `BFIN_BINUTILS` | directory with `bfin-elf-as` and `bfin-elf-ld` (semantic test) | `/usr/local/bin` |
-| `BFIN_RUN` | the GNU Blackfin simulator (gdb's sim, `--target=bfin-elf`) | `bfin-elf-run` |
+Set `GHIDRA_INSTALL_DIR` if Ghidra is not Homebrew's `opt/ghidra`. The `.sla` is
+compiled at build time and never committed; the zip is reproducible (fixed dates
+and modes).
 
-Outputs go to `build/isa/` and `build/sem/`. No firmware or other third-party image
-is committed; `image` mode reads whatever image you pass.
+## Testing and verification
 
-Known differences, both on the oracle side:
-
-- objdump sign-extends LSETUP start/end offsets; they are unsigned
-  (pcrel5m2, lppcrel11m2), as the simulator and the hardware treat them.
-- objdump prints `DBG`/`PRNT`/`DBGAL`/`DBGAH` with reserved register numbers
-  as "Illegal register"; those do not decode here.
-
-Simulator cases left out of the comparison: encodings it rejects (it is
-stricter than objdump), host-undefined results (register shifts by negative
-counts), its out-of-bounds write for a 32-bit MAC1 result with dst=7, packets
-that write one register twice, and an uninitialised flag in
-`Rd = A1 + A0, Rd = A1 - A0`. Packet writeback of data registers needs the
-simulator's `BFIN_PARALLEL_WRITEBACK=1` switch, which the test sets.
-
-## Source layout
-
-The language, in `data/languages/`:
-
-| File | Content |
+| Check | Result |
 | --- | --- |
-| `blackfin.slaspec` | registers, context, tokens, register attachments |
-| `bfin_macros.sinc` | ASTAT flag helpers |
-| `bfin_16.sinc` | 16-bit instructions; the parallel-capable ones in `S16` |
-| `bfin_32.sinc` | LSETUP, immediate loads, long jump/call, 16-bit-offset loads/stores, LINK |
-| `bfin_dsp.sinc` | dsp32mac, dsp32mult |
-| `bfin_dspalu.sinc` | dsp32alu |
-| `bfin_dspshift.sinc` | dsp32shift, dsp32shiftimm |
-| `bfin_par.sinc` | multi-issue packets |
-| `bfin_loop.sinc` | root table and hardware-loop back-edges |
+| Every 16-bit instruction word against objdump (`tools/bfin_isatest.py 16`) | 65,448 of 65,536 identical; the other 88 are two documented objdump quirks |
+| 1.5M sampled 32/64-bit encodings with random parallel slots (`tools/bfin_isatest.py 32 96`) | identical except those quirks |
+| Semantics against the GNU simulator (`tools/bfin_semtest.py`) | 62,700 + 59,914 + 18,764 cases, no mismatch |
+| A whole analysed firmware program against objdump (`tools/bfin_crosscheck.py`) | 160,291 of 160,291 instructions agree |
 
-Test tooling: `tools/` (harnesses and `build.sh`) and `ghidra_scripts/`
-(`DisasmSlots.java` decodes the synthetic slots, `BfinEmuTest.java` runs cases in
-Ghidra's p-code emulator, `ExportInstructions.java` dumps a program's instructions).
+The harnesses run Ghidra headless against the installed extension and need an
+objdump with Blackfin support, plus `bfin-elf-as`/`bfin-elf-ld` and the GNU
+Blackfin simulator for the semantic test. [docs/verification.md](docs/verification.md)
+has the setup, the order to run them in, the two objdump quirks and the
+simulator cases left out of the comparison. No firmware or other third-party
+image is committed.
 
 ## Contributing
 
-Issues and pull requests are welcome.
-
-- GNU objdump is the decoding oracle and the GNU simulator the semantic oracle. A
-  change to decoding or semantics should keep `tools/bfin_isatest.py 16` and
-  `32` and `tools/bfin_semtest.py dsp` and `16` clean; say in the PR what you ran and
-  what changed in the summary line.
-- If you disagree with an oracle (as with the two objdump quirks above), document why
-  in the README with the hardware or manual reference.
-- Keep `NOTICE.md` current when you consult a new reference, and do not commit
-  firmware images or other third-party binaries.
+Bug reports and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+For a wrong decode or wrong semantics, please use the
+[issue template](https://github.com/geepot/ghidra-blackfin/issues/new?template=wrong-decode.md)
+and include the address, the bytes, the objdump output and what you expected.
 
 ## Licence
 
