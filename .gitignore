@@ -1,1 +1,5 @@
 data/languages/*.sla
+build/
+dist/
+__pycache__/
+.DS_Store

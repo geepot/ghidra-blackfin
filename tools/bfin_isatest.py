@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Compare the Blackfin SLEIGH decoder with GNU objdump over synthetic encodings.
 
-    scripts/bfin_isatest.py 16      every 16-bit instruction word (65536 slots)
-    scripts/bfin_isatest.py 32 [n]  every 32-bit first word x n (24) second words, random parallel slots
-    scripts/bfin_isatest.py gui     every distinct instruction encoding objdump finds in the GUI image
+    tools/bfin_isatest.py 16      every 16-bit instruction word (65536 slots)
+    tools/bfin_isatest.py 32 [n]  every 32-bit first word x n (24) second words, random parallel slots
+    tools/bfin_isatest.py image IMAGE  every distinct instruction encoding objdump finds in a raw
+                                       Blackfin code image (little-endian, any load address)
 
 Each encoding sits at the start of a 10-byte slot [w0 w1 s1 s2 NOP]; s1/s2 are always
 16-bit words, so objdump cannot run across a slot boundary. Ghidra decodes every slot
@@ -28,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bfin_crosscheck import norm, parse_objdump  # noqa: E402
 
 W = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OBJDUMP = "/opt/homebrew/opt/binutils/bin/objdump"
+from bfin_crosscheck import OBJDUMP  # noqa: E402
 GHIDRA = os.environ.get("GHIDRA", "/opt/homebrew/opt/ghidra/libexec")
 BASE = 0x1000
 SLOT = 10
@@ -63,10 +64,10 @@ def corpus(mode, samples=24):
             seconds = [0, 0xFFFF] + [rng.randrange(0x10000) for _ in range(samples - 2)]
             for w1 in seconds:
                 words.append((w0, w1, slot16(rng), slot16(rng)))
-    elif mode == "gui":
+    elif mode == "image":
         seen = set()
-        blob = open(os.path.join(W, "inputs/gui-sdram-0x00c66e44.bin"), "rb").read()
-        out = subprocess.run([OBJDUMP, "-D", "-z", "-b", "binary", "-m", "bfin", os.path.join(W, "inputs/gui-sdram-0x00c66e44.bin")],
+        blob = open(IMAGE, "rb").read()
+        out = subprocess.run([OBJDUMP, "-D", "-z", "-b", "binary", "-m", "bfin", IMAGE],
                              capture_output=True, text=True, check=True).stdout
         base = 0
         for a, n, text in parse_objdump(out):
@@ -109,9 +110,17 @@ def ghidra(path, tsv):
     return gh
 
 
+IMAGE = None
+
+
 def main():
+    global IMAGE
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
-    words = corpus(mode, int(sys.argv[2]) if len(sys.argv) > 2 else 24)
+    if mode == "image":
+        if len(sys.argv) < 3:
+            raise SystemExit("usage: tools/bfin_isatest.py image IMAGE")
+        IMAGE = sys.argv[2]
+    words = corpus(mode, int(sys.argv[2]) if len(sys.argv) > 2 and mode == "32" else 24)
     d = os.path.join(W, "build/isa")
     os.makedirs(d, exist_ok=True)
     binpath = os.path.join(d, f"{mode}.bin")

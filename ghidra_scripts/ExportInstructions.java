@@ -1,7 +1,7 @@
 // Write every instruction of the current program as "address<TAB>length<TAB>text"
 // (plus the containing function) for cross-checking against another disassembler.
 // Args: <output.tsv>
-//@category CDJ2000NXS
+//@category Blackfin
 
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.listing.Instruction;

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Differential test of the Blackfin p-code semantics against the GNU simulator.
 
-    scripts/bfin_semtest.py [gui|dsp|16|all] [limit]
+    tools/bfin_semtest.py [image|dsp|16|all] [limit]
 
-Needs build/isa/{gui,32}.{bin,ghidra.tsv} from bfin_isatest.py. Every decodable,
-non-control-flow instruction encoding found in the GUI image (gui), a sample of
+Needs build/isa/{image,32,16}.{bin,ghidra.tsv} from bfin_isatest.py (image: only if you ran it). Every decodable,
+non-control-flow instruction encoding found in a code image (image), a sample of
 synthetic DSP32 encodings (dsp), every 16-bit encoding (16) or all three runs once
 per random register state
 in Ghidra's p-code emulator (BfinEmuTest.java) and in the GNU Blackfin simulator
-(`run`, test programs built with bfin-elf-as). Each case owns a 256-byte memory
+(`bfin-elf-run`, test programs built with bfin-elf-as). Each case owns a 256-byte memory
 window that all its pointer registers (adjusted for immediate offsets) point into.
 Compared: R0-R7, P0-P5, SP, FP, I/M/B/L, RETS, A0, A1, ASTAT and a sum/xor
 checksum of the window. The simulator runs in its operating environment with an
@@ -26,8 +26,10 @@ from collections import Counter, defaultdict
 W = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 B = os.path.join(W, "build/sem")
 GHIDRA = os.environ.get("GHIDRA", "/opt/homebrew/opt/ghidra/libexec")
-TOOLS = os.path.expanduser("~/.local/share/cdj-toolchain/binutils-bfin/bin")
-SIM = os.environ.get("BFIN_RUN", os.path.expanduser("~/Git/cdj2000-emulator/build/sim-build/sim/bfin/run"))
+# directory holding bfin-elf-as and bfin-elf-ld (GNU binutils configured --target=bfin-elf)
+TOOLS = os.environ.get("BFIN_BINUTILS", "/usr/local/bin")
+# the GNU Blackfin simulator (gdb sim, configured --target=bfin-elf)
+SIM = os.environ.get("BFIN_RUN", "bfin-elf-run")
 REGION = 0x01000000          # case i's window is REGION + 0x100 * i
 CODE = 0x00800000            # Ghidra executes case i at CODE + 16 * i
 CHUNK = 6000
@@ -127,7 +129,7 @@ def state(rng, words, win):
 def load_corpus(mode, rng):
     """(words, text) of every decodable, testable encoding."""
     out = []
-    for name in {"gui": ["gui"], "dsp": ["32"], "16": ["16"]}.get(mode, ["gui", "32", "16"]):
+    for name in {"image": ["image"], "dsp": ["32"], "16": ["16"]}.get(mode, [n for n in ("image", "32", "16") if os.path.exists(os.path.join(W, f"build/isa/{n}.bin"))]):
         data = open(os.path.join(W, f"build/isa/{name}.bin"), "rb").read()
         rows = [line.rstrip("\n").split("\t", 2) for line in open(os.path.join(W, f"build/isa/{name}.ghidra.tsv"))]
         picks = []

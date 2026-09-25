@@ -4,7 +4,7 @@
 // Output lines: index <TAB> reg=hex,... (after one step) <TAB> checksum words, or "index<TAB>ERR <message>".
 // The current program holds the memory image; every case only touches its window.
 // Args: <cases.tsv> <results.tsv>
-//@category CDJ2000NXS
+//@category Blackfin
 
 import ghidra.app.emulator.EmulatorHelper;
 import ghidra.app.script.GhidraScript;

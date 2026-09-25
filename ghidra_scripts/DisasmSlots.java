@@ -2,7 +2,7 @@
 // following flow, and write "address<TAB>length<TAB>text" (length 0 = no decode).
 // Used by scripts/bfin_isatest.py to compare the SLEIGH decoder with GNU objdump.
 // Args: <output.tsv> <stride>
-//@category CDJ2000NXS
+//@category Blackfin
 
 import ghidra.app.script.GhidraScript;
 import ghidra.app.util.PseudoDisassembler;

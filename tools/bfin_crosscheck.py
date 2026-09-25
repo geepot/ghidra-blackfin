@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Cross-check Ghidra's Blackfin disassembly against GNU objdump.
 
-    scripts/bfin_crosscheck.py build/gui-sdram.ghidra.tsv \
-        inputs/gui-sdram-0x00c66e44.bin 0x00c66e44 inputs/gui-l1-bootstrap-0xffa08000.bin 0xffa08000 \
-        > build/gui-crosscheck.tsv
+    tools/bfin_crosscheck.py program.ghidra.tsv IMAGE BASE [IMAGE BASE ...] > crosscheck.tsv
 
 The TSV comes from ExportInstructions.java. objdump runs once per contiguous run of
 Ghidra instructions, so both tools start every run at the same address. Each Ghidra
@@ -16,12 +14,14 @@ instruction is classified:
   desync      objdump has no instruction starting at this address
 A summary goes to stderr; every non-agreeing row goes to stdout.
 """
+import os
 import re
 import subprocess
 import sys
 from collections import Counter
 
-OBJDUMP = "/opt/homebrew/opt/binutils/bin/objdump"
+# an objdump built with Blackfin support (GNU binutils --enable-targets=all, or bfin-elf-objdump)
+OBJDUMP = os.environ.get("BFIN_OBJDUMP", "/opt/homebrew/opt/binutils/bin/objdump")
 LINE = re.compile(r"^\s*([0-9a-f]+):\t((?:[0-9a-f]{2} )+)\s*(?:\t(.*))?$")
 NUM = re.compile(r"(?<![A-Z0-9_.])(-?)(0X[0-9A-F]+|[0-9]+)")
 PLACEHOLDER = re.compile(r"^(BFIN16|BFIN32|DSP32|UNDEF|\?\?|bad)", re.I)
