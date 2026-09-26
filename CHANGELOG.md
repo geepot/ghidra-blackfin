@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.1.0 - 2026-09-25
+
 ### Testing
 * `DisasmSlots.java` builds p-code for every decoded slot and lists failures
   in `<output>.pcode`; `tools/bfin_isatest.py` reports them as `pcode` and
