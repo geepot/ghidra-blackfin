@@ -221,8 +221,6 @@ def run_ghidra(cases, region):
             hexb = struct.pack("<%dH" % len(words), *words).hex()
             kv = ",".join(f"{k}={v:x}" for k, v in regs.items())
             f.write(f"{i}\t{CODE + 16 * i:x}\t{hexb}\t{win:x}\t{kv}\n")
-    env = dict(os.environ, JAVA_HOME=os.environ.get(
-        "JAVA_HOME", "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"))
     proj = os.path.join(B, "proj")
     os.makedirs(proj, exist_ok=True)
     r = subprocess.run([f"{GHIDRA}/support/analyzeHeadless", proj, "sem", "-import", region, "-overwrite",
@@ -230,7 +228,7 @@ def run_ghidra(cases, region):
                         "-processor", "Blackfin:LE:32:default", "-noanalysis",
                         "-scriptPath", os.path.join(W, "ghidra_scripts"),
                         "-postScript", "BfinEmuTest.java", tsv, res, "-deleteProject"],
-                       capture_output=True, text=True, env=env)
+                       capture_output=True, text=True)
     if r.returncode or not os.path.exists(res):
         sys.stderr.write(r.stdout[-3000:] + r.stderr[-3000:])
         raise SystemExit("ghidra failed")

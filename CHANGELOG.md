@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.2.0 - 2026-10-27
+
+* Target Ghidra 12.2 and document its JDK 25 minimum.
+* Let Ghidra select the JDK for decoding and semantic tests instead of
+  defaulting to a Homebrew JDK 21 path.
+* Revalidate the installed 12.2 extension against the complete decoder
+  corpora, GNU simulator semantics, directed DAG/debug checks and GUI LDR
+  smoke test; record the results in `docs/verification.md`.
+
 ## 1.1.0 - 2026-09-25
 
 ### Testing

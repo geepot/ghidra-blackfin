@@ -1,6 +1,6 @@
 # ghidra-blackfin
 
-A Ghidra 12 processor extension for the **classic Analog Devices Blackfin ISA**
+A Ghidra 12.2 processor extension for the **classic Analog Devices Blackfin ISA**
 (ADSP-BF53x and relatives). Ghidra has no Blackfin support; this module decodes
 the whole instruction set, including multi-issue packets and hardware loops, and
 gives every instruction p-code semantics, so the decompiler works on Blackfin
@@ -16,7 +16,7 @@ the Pioneer CDJ-2000NXS.
 2. In Ghidra: *File → Install Extensions*, **+**, pick the zip, restart Ghidra.
 
 The zip is tied to the Ghidra version it was built against (the current release
-targets 12.1.3); rebuild it for any other 12.x release. Programs analysed with an
+targets 12.2); rebuild it for any other 12.x release. Programs analysed with an
 earlier build keep the old instruction lengths in their listing: clear and
 re-disassemble them after upgrading.
 
@@ -62,7 +62,7 @@ into its target memory regions.
 
 ## Build
 
-Needs a Ghidra 12.x install (for `support/sleigh`) and Python 3.
+Needs a Ghidra 12.2 install (for `support/sleigh`), JDK 25 or newer, and Python 3.
 
 ```sh
 tools/build.sh             # dist/ghidra_<ver>_PUBLIC_Blackfin.zip
@@ -71,7 +71,8 @@ tools/build.sh --install   # ... and unpack it into that Ghidra version's per-us
 
 Set `GHIDRA_INSTALL_DIR` if Ghidra is not Homebrew's `opt/ghidra`. The `.sla` is
 compiled at build time and never committed; the zip is reproducible (fixed dates
-and modes).
+and modes). Ghidra selects the JDK using its launcher configuration; set
+`JAVA_HOME` if needed.
 
 ## Testing and verification
 

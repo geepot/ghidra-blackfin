@@ -94,14 +94,12 @@ def objdump(path):
 def ghidra(path, tsv):
     proj = os.path.join(W, "build/isa/proj")
     os.makedirs(proj, exist_ok=True)
-    env = dict(os.environ, JAVA_HOME=os.environ.get(
-        "JAVA_HOME", "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"))
     r = subprocess.run([f"{GHIDRA}/support/analyzeHeadless", proj, "isa", "-import", path, "-overwrite",
                         "-loader", "BinaryLoader", "-loader-baseAddr", hex(BASE),
                         "-processor", "Blackfin:LE:32:default", "-noanalysis",
                         "-scriptPath", os.path.join(W, "ghidra_scripts"),
                         "-postScript", "DisasmSlots.java", tsv, str(SLOT), "-deleteProject"],
-                       capture_output=True, text=True, env=env)
+                       capture_output=True, text=True)
     if r.returncode or not os.path.exists(tsv):
         sys.stderr.write(r.stdout[-4000:] + r.stderr[-4000:])
         raise SystemExit("ghidra failed")

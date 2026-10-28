@@ -6,6 +6,14 @@ p-code semantics against the GNU Blackfin simulator. The harnesses live in
 
 ## Results
 
+Validated against the locally installed Ghidra 12.2 with JDK 25 on
+2026-10-27: the full `16` and `32 96` decoder corpora reproduce the results
+below with no p-code failures. The combined `bfin_semtest.py all` run reports
+80,774 matches, 23,570 simulator-rejected and 833 simulator-undefined cases,
+with no mismatches. All 40 reserved debug-register forms, 13 directed DAG
+cases (including GNU simulator comparison), the 537-instruction GUI LDR
+bootstrap and its 368 distinct encodings also pass.
+
 | Check | Command | Result |
 | --- | --- | --- |
 | Every 16-bit instruction word against objdump | `tools/bfin_isatest.py 16` | 65,488 of 65,536 identical; 48 LSETUP offset text differences |
@@ -16,7 +24,8 @@ p-code semantics against the GNU Blackfin simulator. The harnesses live in
 | Whole reconstructed GUI ELF against objdump, per code run | `ExportInstructions.java`, then `tools/bfin_crosscheck.py` | All 103,614 analysed instructions agree |
 
 The harnesses run Ghidra headless with the *installed* extension (`GHIDRA`, default
-Homebrew's `opt/ghidra/libexec`; JDK 21 via `JAVA_HOME`) and need:
+Homebrew's `opt/ghidra/libexec`). Ghidra 12.2 requires JDK 25 or newer; the
+harnesses inherit `JAVA_HOME` and let Ghidra's launcher select the JDK. They need:
 
 | Variable | Tool | Default |
 | --- | --- | --- |
